@@ -1259,6 +1259,85 @@ def test_write_due_markdown_rewrites_when_content_changes(tmp_path: Path) -> Non
     assert "Homework 2" in path.read_text(encoding="utf-8")
 
 
+def test_build_due_markdown_renders_checkboxes() -> None:
+    """每条待办都是 GFM 任务列表项，写完可以直接勾选。"""
+    from datetime import date, datetime
+
+    from bb_sync.blackboard.models import Course, DueItem
+    from bb_sync.core.due import build_due_markdown
+
+    course = Course(bb_id="_1_1", title="CSC5010: Artificial Intelligence")
+    item = DueItem("_1_1", "CSC5010", "AI", "Homework 1", date(2026, 10, 31))
+
+    markdown = build_due_markdown(
+        [course], [item], generated_at=datetime(2026, 10, 31, 8, 30), today=date(2026, 10, 31)
+    )
+
+    assert "- [ ] **2026-10-31**" in markdown
+    assert "`- [ ]` → `- [x]`" in markdown
+
+
+def test_write_due_markdown_preserves_checked_items(tmp_path: Path) -> None:
+    """在 due.md 里勾选后，下次同步保留 [x]；内容没变时连文件都不重写。"""
+    from datetime import date, datetime
+
+    from bb_sync.blackboard.models import Course, DueItem
+    from bb_sync.core.due import write_due_markdown
+
+    path = tmp_path / "due.md"
+    course = Course(bb_id="_1_1", title="CSC5010: Artificial Intelligence")
+    item = DueItem("_1_1", "CSC5010", "AI", "Homework 1", date(2026, 10, 31))
+
+    write_due_markdown(
+        path, [course], [item], today=date(2026, 10, 31), generated_at=datetime(2026, 10, 31, 9, 0)
+    )
+    # 模拟用户手动勾选
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("- [ ] ", "- [x] ", 1), encoding="utf-8"
+    )
+    checked = path.read_text(encoding="utf-8")
+
+    changed = write_due_markdown(
+        path,
+        [course],
+        [item],
+        today=date(2026, 10, 31),
+        generated_at=datetime(2026, 10, 31, 18, 0),
+    )
+
+    assert changed is False
+    assert path.read_text(encoding="utf-8") == checked
+    assert "- [x] **2026-10-31**" in checked
+
+
+def test_write_due_markdown_keeps_check_when_relative_text_changes(tmp_path: Path) -> None:
+    """跨天后「还有 N 天」变了，勾选仍然跟得住同一条待办。"""
+    from datetime import date, datetime
+
+    from bb_sync.blackboard.models import Course, DueItem
+    from bb_sync.core.due import write_due_markdown
+
+    path = tmp_path / "due.md"
+    course = Course(bb_id="_1_1", title="CSC5010: Artificial Intelligence")
+    item = DueItem("_1_1", "CSC5010", "AI", "HW5", date(2026, 11, 8))
+
+    write_due_markdown(
+        path, [course], [item], today=date(2026, 11, 1), generated_at=datetime(2026, 11, 1, 9, 0)
+    )
+    assert "（还有 7 天）" in path.read_text(encoding="utf-8")
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("- [ ] ", "- [x] ", 1), encoding="utf-8"
+    )
+
+    changed = write_due_markdown(
+        path, [course], [item], today=date(2026, 11, 3), generated_at=datetime(2026, 11, 3, 9, 0)
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert changed is True
+    assert "- [x] **2026-11-08**（还有 5 天）" in text
+
+
 def test_scrape_announcements_keeps_distinct_titles_and_bodies(tmp_path: Path) -> None:
     from bb_sync.blackboard.models import Course
     from bb_sync.blackboard.scraper import scrape_announcements

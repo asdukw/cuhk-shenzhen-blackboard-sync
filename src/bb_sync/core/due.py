@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter, defaultdict
+from collections.abc import Collection
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -166,6 +167,39 @@ def merge_due_items(todo_items: list[DueItem], announcement_items: list[DueItem]
     return merged
 
 
+#: due.md 里复选框行的形状：``- [ ] …`` / ``- [x] …``。
+_CHECKBOX_LINE_RE = re.compile(r"^- \[(?P<mark>[ xX])\] (?P<body>.*)$")
+
+#: 行内的相对时间（如「还有 3 天」）；每天都会变，不参与勾选状态的匹配。
+_RELATIVE_TIME_RE = re.compile(r"（[^）]*）")
+
+
+def _item_signature(item: DueItem) -> str:
+    """条目的稳定签名：日期 + 课程 + 标题，不含随日期变化的相对时间。
+
+    用户在 due.md 里勾选后，下次运行靠它认回同一条待办并保留 ``[x]``。
+    """
+    due = item.due_date.isoformat() if item.due_date else "日期未知"
+    course_url = f"{BASE}/webapps/blackboard/execute/launcher?type=Course&id={item.course_id}"
+    label = kind_label(item.kind)
+    badge = f"【{label}】" if label else ""
+    return (
+        f"**{due}** — [{_escape_markdown(item.course_label)}]({course_url}) — "
+        f"{badge}{_escape_markdown(item.title)}"
+    )
+
+
+def _checked_signatures(markdown: str) -> set[str]:
+    """从现有 due.md 读出已勾选条目的签名。"""
+    done: set[str] = set()
+    for line in markdown.splitlines():
+        match = _CHECKBOX_LINE_RE.match(line)
+        if not match or match.group("mark").lower() != "x":
+            continue
+        done.add(_RELATIVE_TIME_RE.sub("", match.group("body"), count=1))
+    return done
+
+
 def build_due_markdown(
     courses: list[Course],
     items: list[DueItem],
@@ -173,11 +207,15 @@ def build_due_markdown(
     failed: int = 0,
     today: date | None = None,
     generated_at: datetime | None = None,
+    done: Collection[str] = (),
 ) -> str:
     """生成全局 ``due.md`` 文本。
 
     输出按「已逾期 → 今天 → 明天 → 未来 7 天 → 之后 → 日期未知 → 已过期事件」排序；
     同一分组内再按日期、课程和任务名稳定排序。
+
+    ``done`` 是已勾选条目的签名集合（见 :func:`_item_signature`），命中的条目会渲染成
+    ``- [x]``；调用方通常从上一版 due.md 里读出它，从而跨次同步保留完成状态。
     """
     day = today or date.today()
     generated = generated_at or datetime.now().astimezone()
@@ -208,6 +246,8 @@ def build_due_markdown(
         lines.append(f"> 另有 {len(past_events)} 项公告里的测验/考试日期已过，列在最后仅供回看。")
     if failed:
         lines.append(f"> 注意：{failed} 门课程抓取失败，结果可能不完整。")
+    if items:
+        lines.append("> 完成一项就在前面打勾（`- [ ]` → `- [x]`），下次同步会保留完成状态。")
     lines.append("")
 
     if not items:
@@ -230,8 +270,9 @@ def build_due_markdown(
             )
             label = kind_label(item.kind)
             badge = f"【{label}】" if label else ""
+            box = "[x]" if _item_signature(item) in done else "[ ]"
             lines.append(
-                f"- **{due}**（{relative_due(item, day)}） — "
+                f"- {box} **{due}**（{relative_due(item, day)}） — "
                 f"[{_escape_markdown(item.course_label)}]({course_url}) — "
                 f"{badge}{_escape_markdown(item.title)}"
             )
@@ -262,20 +303,23 @@ def write_due_markdown(
     内容（除更新时间外）和现有文件一样时保持原样：每次运行都重写会把「更新时间」
     一起改掉，即使待办一条没变，git 里也多出一份只有时间戳的 diff。
     """
+    previous = ""
+    if path.exists():
+        try:
+            previous = path.read_text(encoding="utf-8")
+        except OSError:
+            previous = ""
     content = build_due_markdown(
         courses,
         items,
         failed=failed,
         today=today,
         generated_at=generated_at,
+        # 用户在上一版里勾选的条目，重新生成时保持 [x]
+        done=_checked_signatures(previous),
     )
-    if path.exists():
-        try:
-            previous = path.read_text(encoding="utf-8")
-        except OSError:
-            previous = ""
-        if _without_timestamp(previous) == _without_timestamp(content):
-            return False
+    if previous and _without_timestamp(previous) == _without_timestamp(content):
+        return False
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return True
