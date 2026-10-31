@@ -303,17 +303,6 @@ def _scan_due_items(page, courses: list[Course], console: Console) -> DueScan:
             scan.both_failed += 1
         scan.items.extend(todo_items)
         scan.items.extend(announcement_items)
-        parts = []
-        if todo_ok:
-            parts.append(f"待办 x{len(todo_items)}")
-        if announcement_items:
-            parts.append(f"公告测验/考试 x{len(announcement_items)}")
-        console.line(
-            ("    ", STYLE_TEXT),
-            (label, STYLE_ACCENT),
-            (": ", STYLE_MUTED),
-            ("，".join(parts) if parts else "未读取到内容", STYLE_TEXT),
-        )
     scan.items = due.sort_due_items(scan.items)
     return scan
 
