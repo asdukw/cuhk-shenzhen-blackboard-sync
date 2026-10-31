@@ -31,7 +31,17 @@ from bb_sync.browser import launcher
 from bb_sync.core import due
 from bb_sync.core.config import Settings
 from bb_sync.core.errors import ConfigError, NetworkError, NotFoundError
-from bb_sync.core.output import Console
+from bb_sync.core.output import (
+    STYLE_ACCENT,
+    STYLE_BADGE,
+    STYLE_ERROR,
+    STYLE_HEADING,
+    STYLE_MUTED,
+    STYLE_SUCCESS,
+    STYLE_TEXT,
+    STYLE_WARN,
+    Console,
+)
 
 
 @dataclass
@@ -156,7 +166,15 @@ def sync_course(
     settings = options.settings
     keywords = settings.keywords
 
-    console.step(f"=== {course.code or '?'} | {course.title} → {course_dir} ===")
+    console.line(
+        ("=== ", STYLE_MUTED),
+        (course.code or "?", f"{STYLE_ACCENT} {STYLE_HEADING}"),
+        (" | ", STYLE_MUTED),
+        (course.title, STYLE_HEADING),
+        (" → ", STYLE_MUTED),
+        (str(course_dir), STYLE_MUTED),
+        (" ===", STYLE_MUTED),
+    )
     if not options.dry_run:
         course_dir.mkdir(parents=True, exist_ok=True)
 
@@ -166,7 +184,8 @@ def sync_course(
     all_items: list[FileItem] = []
     visited: set[str] = set()
     menu = scraper.collect_menu_links(page, course)
-    console.log("    内容区: " + (", ".join(n for _, n in menu) or "(无)"))
+    areas = ", ".join(n for _, n in menu) or "(无)"
+    console.line(("    内容区: ", STYLE_MUTED), (areas, STYLE_TEXT))
     for area_url, area_name in menu:
         all_items += scraper.find_files(
             page, area_url, area_name, 1, settings.max_depth, keywords, visited
@@ -176,7 +195,11 @@ def sync_course(
     uniq: dict[str, FileItem] = {}
     for item in all_items:
         uniq.setdefault(item.url, item)
-    console.log(f"    发现 {len(uniq)} 个文件")
+    console.line(
+        ("    发现 ", STYLE_MUTED),
+        (str(len(uniq)), STYLE_HEADING),
+        (" 个文件", STYLE_MUTED),
+    )
 
     index = downloader.build_index(course_dir)
     label = course.code or course.title
@@ -213,13 +236,18 @@ def _record_saved(
 
 
 def _log_item(console: Console, status: str, category: str, name: str) -> None:
-    """按状态打印单条下载结果（全部走 stderr）。"""
+    """按状态打印单条下载结果（全部走 stderr）。
+
+    状态用符号 + 颜色双重表达（``↓`` 绿 = 新下载、``=`` 淡 = 已存在、
+    ``?`` 黄 = dry-run），丢掉颜色后依然一眼分得清。
+    """
+    badge = (f"[{category}] ", STYLE_MUTED)
     if status == "downloaded":
-        console.log(f"    ↓ [{category}] {name}")
+        console.line(("    ↓ ", STYLE_SUCCESS), badge, (name, STYLE_TEXT))
     elif status == "would-download":
-        console.log(f"    ? [{category}] {name} (dry-run)")
+        console.line(("    ? ", STYLE_WARN), badge, (f"{name} (dry-run)", STYLE_TEXT))
     elif status == "exists":
-        console.log(f"    = [{category}] {name} (已存在，跳过)")
+        console.line(("    = ", STYLE_MUTED), badge, (f"{name} (已存在，跳过)", STYLE_MUTED))
     elif status == "empty":
         console.warn(f"    [{category}] {name} 内容为空，跳过")
 
@@ -230,12 +258,22 @@ def _print_plan(console: Console, courses: list[Course], root: Path, dry_run: bo
     每个课程目录都显示为**绝对路径**——相对路径容易让人误判落盘位置。
     """
     console.rule("同步计划")
-    console.log(f"根目录: {root}")
-    console.log("课程目录:")
+    console.line(("根目录: ", STYLE_MUTED), (str(root), STYLE_TEXT))
+    console.log("课程目录:", level="muted")
     for course in courses:
         label = course.code or course.title
-        console.log(f"  {label:<10} → {root / course.slug}")
-    console.log(f"合计 {len(courses)} 门课程" + ("（dry-run，不会写入）" if dry_run else ""))
+        console.line(
+            ("  ", STYLE_TEXT),
+            (f"{label:<10}", STYLE_ACCENT),
+            (" → ", STYLE_MUTED),
+            (str(root / course.slug), STYLE_MUTED),
+        )
+    console.line(
+        ("合计 ", STYLE_MUTED),
+        (str(len(courses)), STYLE_HEADING),
+        (" 门课程", STYLE_MUTED),
+        ("（dry-run，不会写入）" if dry_run else "", STYLE_WARN),
+    )
     console.log("")
 
 
@@ -270,7 +308,12 @@ def _scan_due_items(page, courses: list[Course], console: Console) -> DueScan:
             parts.append(f"待办 x{len(todo_items)}")
         if announcement_items:
             parts.append(f"公告测验/考试 x{len(announcement_items)}")
-        console.log(f"    {label}: {'，'.join(parts) if parts else '未读取到内容'}")
+        console.line(
+            ("    ", STYLE_TEXT),
+            (label, STYLE_ACCENT),
+            (": ", STYLE_MUTED),
+            ("，".join(parts) if parts else "未读取到内容", STYLE_TEXT),
+        )
     scan.items = due.sort_due_items(scan.items)
     return scan
 
@@ -325,17 +368,26 @@ def run_sync(options: SyncOptions) -> SyncStats:
                 message = "Congratulations! 没有待办"
             else:
                 message = f"待办 {len(due_items)} 项"
-            console.log(f"[due] {message}（dry-run，未写入 due.md）")
+            console.line(
+                ("[due] ", STYLE_ACCENT),
+                (f"{message}（dry-run，未写入 due.md）", STYLE_MUTED),
+            )
         elif scan.both_failed == len(courses):
             console.warn("[due] 所有课程待办抓取失败，保留现有 due.md")
         else:
             due.write_due_markdown(due_path, courses, due_items, failed=scan.incomplete)
             if due_items:
-                console.log(f"[due] {len(due_items)} 项 → due.md")
+                console.line(
+                    ("[due] ", STYLE_ACCENT), (f"{len(due_items)} 项 → due.md", STYLE_TEXT)
+                )
             elif scan.incomplete:
-                console.log("[due] 未读取到待办（部分课程失败）→ due.md")
+                console.line(
+                    ("[due] ", STYLE_ACCENT), ("未读取到待办（部分课程失败）→ due.md", STYLE_MUTED)
+                )
             else:
-                console.log("[due] Congratulations! 没有待办 → due.md")
+                console.line(
+                    ("[due] ", STYLE_ACCENT), ("Congratulations! 没有待办 → due.md", STYLE_SUCCESS)
+                )
 
     # 浏览器由 browser_session 收尾：默认已关闭（--keep-open 则留在后台）
     _print_summary(console, stats, options.dry_run)
@@ -349,11 +401,25 @@ def _print_summary(console: Console, stats: SyncStats, dry_run: bool) -> None:
     """汇总输出（stderr，人读）。"""
     console.rule("汇总")
     if dry_run:
-        console.log(f"待下载: {stats.would_download} 个文件（未实际下载）")
+        console.line(
+            ("待下载: ", STYLE_TEXT),
+            (str(stats.would_download), f"{STYLE_HEADING} {STYLE_WARN}"),
+            (" 个文件（未实际下载）", STYLE_MUTED),
+        )
     else:
-        console.log(f"新下载 {stats.downloaded} 个，已存在跳过 {stats.exists} 个")
+        console.line(
+            ("新下载 ", STYLE_TEXT),
+            (str(stats.downloaded), f"{STYLE_HEADING} {STYLE_SUCCESS}"),
+            (" 个，已存在跳过 ", STYLE_MUTED),
+            (str(stats.exists), STYLE_HEADING),
+            (" 个", STYLE_MUTED),
+        )
     if stats.failed:
-        console.warn(f"失败 {stats.failed} 个")
+        console.line(
+            ("! 失败 ", STYLE_WARN),
+            (str(stats.failed), f"{STYLE_HEADING} {STYLE_WARN}"),
+            (" 个", STYLE_WARN),
+        )
 
 
 def _print_saved_files(console: Console, files: list[SavedFile]) -> None:
@@ -367,7 +433,12 @@ def _print_saved_files(console: Console, files: list[SavedFile]) -> None:
         return
     console.rule("新下载明细")
     for saved in files:
-        console.log(f"[new] {saved.course} | {saved.name}")
+        console.line(
+            ("[new] ", STYLE_SUCCESS),
+            (saved.course, STYLE_ACCENT),
+            (" | ", STYLE_MUTED),
+            (saved.name, STYLE_TEXT),
+        )
 
 
 def _print_due_details(
@@ -388,11 +459,23 @@ def _print_due_details(
     console.rule("待办明细")
     for item in items:
         due_date = item.due_date.isoformat() if item.due_date else "日期未知"
+        date_style = STYLE_TEXT if item.due_date is not None else STYLE_MUTED
         if item.due_date is not None and item.due_date < day:
             due_date = f"{due_date}（{due.relative_due(item, day)}）"
+            date_style = STYLE_ERROR  # 逾期 / 已考过：唯一需要马上去看的
+        elif item.due_date == day:
+            date_style = STYLE_WARN
         label = due.kind_label(item.kind)
         badge = f"【{label}】" if label else ""
-        console.log(f"[due] {due_date} | {item.course_label} | {badge}{item.title}")
+        console.line(
+            ("[due] ", STYLE_ACCENT),
+            (due_date, date_style),
+            (" | ", STYLE_MUTED),
+            (item.course_label, STYLE_ACCENT),
+            (" | ", STYLE_MUTED),
+            (badge, STYLE_BADGE),
+            (item.title, STYLE_TEXT),
+        )
 
 
 def list_courses(options: SyncOptions) -> list[Course]:
@@ -452,7 +535,12 @@ def run_due(options: DueOptions) -> DueStats:
         )
 
     console.rule("待办汇总")
-    console.log(f"发现 {stats.total} 项待办，已写入 {stats.path}")
+    console.line(
+        ("发现 ", STYLE_TEXT),
+        (str(stats.total), f"{STYLE_HEADING} {STYLE_WARN if stats.total else STYLE_SUCCESS}"),
+        (" 项待办，已写入 ", STYLE_TEXT),
+        (stats.path, STYLE_MUTED),
+    )
     problems = []
     if stats.failed:
         problems.append(f"{stats.failed} 门课程 To Do 抓取失败")

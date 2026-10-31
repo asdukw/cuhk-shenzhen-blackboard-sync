@@ -69,6 +69,9 @@ uv run pyright
 ### 1. 输出通道：stdout 只放结果，stderr 只放诊断
 
 - 所有输出走 `core.output.Console`，**禁止直接 `print`**。
+- 诊断行需要强调时用 `console.line((文本, 样式), ...)` 并引用 `output.STYLE_*` 语义色板，
+  不要在调用点新造颜色名；**不要打开 Rich markup**——诊断里到处是 `[new]`、`[作业]`
+  这类方括号文本，会被当成标签。着色在非 TTY、`NO_COLOR`、`--json` 下自动关闭。
 - `--json` 时 stdout 有且仅有一个 JSON 文档；出错时 stdout 保持为空，错误走 stderr。
 - 新增命令或字段时，同步更新 `docs/scripting.md` 的 JSON 结构表与对应测试。
 

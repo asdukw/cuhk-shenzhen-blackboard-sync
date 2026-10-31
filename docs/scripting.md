@@ -12,6 +12,10 @@ bb-sync 按 Unix CLI 惯例严格分流输出：**结果走 stdout，诊断走 s
 
 > 自动更新检查的提示也走 stderr，不会污染 stdout；`--quiet` 下会跳过检查。
 
+彩色只在交互式终端里启用：stdout 被重定向、终端不支持颜色、设置了 `NO_COLOR`
+（任意非空值）或加了 `--json` 时都会自动关闭。所以 `bb-sync run 2>&1 | tee log.txt`
+这类管道里拿到的是纯文本，stdout 的 JSON 更是永远不含转义序列。
+
 ## `--json`：机器可读输出
 
 `--json` 是**全局选项**，位置在子命令之前：

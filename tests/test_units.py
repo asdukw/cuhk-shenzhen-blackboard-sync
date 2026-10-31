@@ -1426,6 +1426,23 @@ def test_scan_due_items_merges_quiz_and_tracks_failures(monkeypatch) -> None:
     assert scan.incomplete == 2
 
 
+class _RecordingConsole:
+    """记录诊断输出的假 Console：``line`` 的片段按文本拼回整行。"""
+
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+        self.rules: list[str] = []
+
+    def log(self, message: str = "", **kwargs: object) -> None:
+        self.messages.append(message)
+
+    def line(self, *segments: tuple[str, str]) -> None:
+        self.messages.append("".join(chunk for chunk, _style in segments))
+
+    def rule(self, title: str = "") -> None:
+        self.rules.append(title)
+
+
 def test_print_due_details_one_item_per_line() -> None:
     from datetime import date
     from typing import cast
@@ -1434,18 +1451,7 @@ def test_print_due_details_one_item_per_line() -> None:
     from bb_sync.core import service
     from bb_sync.core.output import Console
 
-    class FakeConsole:
-        def __init__(self) -> None:
-            self.messages: list[str] = []
-            self.rules: list[str] = []
-
-        def log(self, message: str) -> None:
-            self.messages.append(message)
-
-        def rule(self, title: str = "") -> None:
-            self.rules.append(title)
-
-    fake = FakeConsole()
+    fake = _RecordingConsole()
     console = cast(Console, fake)
     service._print_due_details(
         console,
@@ -1547,18 +1553,7 @@ def test_print_saved_files_one_item_per_line() -> None:
     from bb_sync.core import service
     from bb_sync.core.output import Console
 
-    class FakeConsole:
-        def __init__(self) -> None:
-            self.messages: list[str] = []
-            self.rules: list[str] = []
-
-        def log(self, message: str) -> None:
-            self.messages.append(message)
-
-        def rule(self, title: str = "") -> None:
-            self.rules.append(title)
-
-    fake = FakeConsole()
+    fake = _RecordingConsole()
     console = cast(Console, fake)
     service._print_saved_files(
         console,
@@ -1588,18 +1583,7 @@ def test_print_saved_files_skips_empty_section() -> None:
     from bb_sync.core import service
     from bb_sync.core.output import Console
 
-    class FakeConsole:
-        def __init__(self) -> None:
-            self.messages: list[str] = []
-            self.rules: list[str] = []
-
-        def log(self, message: str) -> None:
-            self.messages.append(message)
-
-        def rule(self, title: str = "") -> None:
-            self.rules.append(title)
-
-    fake = FakeConsole()
+    fake = _RecordingConsole()
     console = cast(Console, fake)
     service._print_saved_files(console, [])
 
@@ -1631,24 +1615,28 @@ def test_sync_stats_as_dict_carries_new_files() -> None:
     ]
 
 
+def test_console_line_writes_to_stderr_without_ansi_when_not_tty(capsys) -> None:
+    """带样式的诊断行只走 stderr；非 TTY（测试 / 管道）下不发转义序列。"""
+    from bb_sync.core.output import Console
+
+    Console().line(("课程 ", ""), ("CSC5010", "cyan"))
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert "课程 CSC5010" in err
+    assert "" not in err
+
+    Console(quiet=True).line(("课程 ", ""), ("CSC5010", "cyan"))
+    out, err = capsys.readouterr()
+    assert (out, err) == ("", "")
+
+
 def test_print_due_details_empty_writes_congratulations() -> None:
     from typing import cast
 
     from bb_sync.core import service
     from bb_sync.core.output import Console
 
-    class FakeConsole:
-        def __init__(self) -> None:
-            self.messages: list[str] = []
-            self.rules: list[str] = []
-
-        def log(self, message: str) -> None:
-            self.messages.append(message)
-
-        def rule(self, title: str = "") -> None:
-            self.rules.append(title)
-
-    fake = FakeConsole()
+    fake = _RecordingConsole()
     console = cast(Console, fake)
     service._print_due_details(console, [])
 
