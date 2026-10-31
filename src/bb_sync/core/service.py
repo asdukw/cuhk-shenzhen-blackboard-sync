@@ -301,8 +301,8 @@ def _scan_due_items(page, courses: list[Course], console: Console) -> DueScan:
             console.warn(f"[due] {label} 公告抓取失败: {exc}")
         if not todo_ok and not announcement_ok:
             scan.both_failed += 1
-        scan.items.extend(todo_items)
-        scan.items.extend(announcement_items)
+        # 公告里的作业 deadline 常与 To Do 模块重复：同一个事件只保留 To Do 那份。
+        scan.items.extend(due.merge_due_items(todo_items, announcement_items))
     scan.items = due.sort_due_items(scan.items)
     return scan
 
@@ -364,18 +364,18 @@ def run_sync(options: SyncOptions) -> SyncStats:
         elif scan.both_failed == len(courses):
             console.warn("[due] 所有课程待办抓取失败，保留现有 due.md")
         else:
-            due.write_due_markdown(due_path, courses, due_items, failed=scan.incomplete)
+            changed = due.write_due_markdown(due_path, courses, due_items, failed=scan.incomplete)
+            tail = _due_write_tail(changed)
             if due_items:
-                console.line(
-                    ("[due] ", STYLE_ACCENT), (f"{len(due_items)} 项 → due.md", STYLE_TEXT)
-                )
+                console.line(("[due] ", STYLE_ACCENT), (f"{len(due_items)} 项{tail}", STYLE_TEXT))
             elif scan.incomplete:
                 console.line(
-                    ("[due] ", STYLE_ACCENT), ("未读取到待办（部分课程失败）→ due.md", STYLE_MUTED)
+                    ("[due] ", STYLE_ACCENT),
+                    (f"未读取到待办（部分课程失败）{tail}", STYLE_MUTED),
                 )
             else:
                 console.line(
-                    ("[due] ", STYLE_ACCENT), ("Congratulations! 没有待办 → due.md", STYLE_SUCCESS)
+                    ("[due] ", STYLE_ACCENT), (f"Congratulations! 没有待办{tail}", STYLE_SUCCESS)
                 )
 
     # 浏览器由 browser_session 收尾：默认已关闭（--keep-open 则留在后台）
@@ -384,6 +384,11 @@ def run_sync(options: SyncOptions) -> SyncStats:
     if scan.both_failed < len(courses):
         _print_due_details(console, due_items, scan.incomplete)
     return stats
+
+
+def _due_write_tail(changed: bool) -> str:
+    """due.md 写入结果的后缀：没变化时说明未重写，免得以为命令没生效。"""
+    return " → due.md" if changed else "（due.md 内容未变，未重写）"
 
 
 def _print_summary(console: Console, stats: SyncStats, dry_run: bool) -> None:
@@ -516,7 +521,7 @@ def run_due(options: DueOptions) -> DueStats:
             )
 
         stats.items = scan.items
-        due.write_due_markdown(
+        changed = due.write_due_markdown(
             options.root / "due.md",
             courses,
             scan.items,
@@ -527,8 +532,8 @@ def run_due(options: DueOptions) -> DueStats:
     console.line(
         ("发现 ", STYLE_TEXT),
         (str(stats.total), f"{STYLE_HEADING} {STYLE_WARN if stats.total else STYLE_SUCCESS}"),
-        (" 项待办，已写入 ", STYLE_TEXT),
-        (stats.path, STYLE_MUTED),
+        (" 项待办，", STYLE_TEXT),
+        (f"已写入 {stats.path}" if changed else f"{stats.path} 内容未变，未重写", STYLE_MUTED),
     )
     problems = []
     if stats.failed:

@@ -916,12 +916,16 @@ def test_parse_announcement_due_items_keeps_only_dated_quiz() -> None:
 
     items = parse_announcement_due_items(entries, course, today=date(2026, 10, 13))
 
-    assert len(items) == 1
-    assert items[0].kind == "quiz"
-    assert items[0].title == "In-Class Quiz-1 (Oct.13)"
+    # 第一条是测验；第二条公告里「Assignment 1 deadline + 日期」现在也会收录。
+    assert [(item.kind, item.title) for item in items] == [
+        ("quiz", "In-Class Quiz-1 (Oct.13)"),
+        ("assignment", "Assignment 1"),
+    ]
+    assert [item.due_date.isoformat() for item in items if item.due_date] == [
+        "2026-10-13",
+        "2026-10-11",
+    ]
     assert items[0].course_code == "MDS5020"
-    assert items[0].due_date is not None
-    assert items[0].due_date.isoformat() == "2026-10-13"
 
 
 def test_parse_announcement_due_items_drops_events_past_retention() -> None:
@@ -1062,6 +1066,197 @@ def test_parse_announcement_due_items_prefers_exam_over_quiz() -> None:
     assert [
         (item.kind, item.due_date.isoformat() if item.due_date else None) for item in items
     ] == [("exam", "2026-12-15")]
+
+
+def test_parse_announcement_due_items_reads_exam_date_on_next_line() -> None:
+    """日期写在关键词的下一行（标题 + 空行 + Date: …）也要能读到，别被空行截断。"""
+    from datetime import date
+
+    from bb_sync.blackboard.models import Course
+    from bb_sync.blackboard.scraper import parse_announcement_due_items
+
+    course = Course(bb_id="_1_1", title="DDA5002:Optimization_L02")
+    entries = [
+        {
+            "title": "Midterm Exam Information",
+            "posted_on": "Posted on: Saturday, October 24, 2026 2:48:55 PM CST",
+            "body_markdown": (
+                "Please note the following details for the upcoming midterm exam:\n\n"
+                "**Date**: Sunday, November 1\n"
+                "**Time**: 10:00 a.m.-12:00 p.m."
+            ),
+        },
+        {
+            "title": "Midterm Exam and Coding Assignment 2",
+            "posted_on": "Posted on: Tuesday, October 27, 2026 2:36:47 PM CST",
+            "body_markdown": (
+                "Dear Students,\n\n"
+                "1. Midterm Exam Schedule\n\n"
+                "- Date: November 3, 2026, Tuesday\n"
+                "- Time: 9:00-9:50 AM"
+            ),
+        },
+    ]
+
+    items = parse_announcement_due_items(entries, course, today=date(2026, 10, 31))
+
+    assert [(item.kind, item.due_date.isoformat()) for item in items if item.due_date] == [
+        ("exam", "2026-11-01"),
+        ("exam", "2026-11-03"),
+    ]
+
+
+def test_parse_announcement_due_items_collects_assignment_deadlines() -> None:
+    """公告里的作业截止行要能认出作业名：行内、上一行、公告标题三种写法。"""
+    from datetime import date
+
+    from bb_sync.blackboard.models import Course
+    from bb_sync.blackboard.scraper import parse_announcement_due_items
+
+    course = Course(bb_id="_18482_1", title="CSC5010: Artificial Intelligence")
+    entries = [
+        {
+            "title": "Release of Homework 4&5",
+            "posted_on": "Posted on: Saturday, October 24, 2026 5:25:09 PM CST",
+            "body_markdown": (
+                "Here are the deadlines:\n\n"
+                "- **HW4:** Due by **Oct. 31 at 11:59 PM**.\n"
+                "- **HW5:** Due by **Nov. 8 at 11:59 PM**."
+            ),
+        },
+        {
+            "title": "Assignment 3 Released",
+            "posted_on": "Posted on: Saturday, October 17, 2026 11:20:22 PM CST",
+            "body_markdown": (
+                "Homework assignment 3 is now available on Blackboard. "
+                "Please note that it is due by the end of the day on October 30th."
+            ),
+        },
+        {
+            "title": "Coding Assignment 2 Release",
+            "posted_on": "Posted on: Tuesday, October 27, 2026 2:36:47 PM CST",
+            "body_markdown": "2. Coding Assignment 2 Release\n\n- Deadline: 23:59, November 2, 2026",
+        },
+        {
+            # 没有可识别的作业名：日期再新也不能当成作业 deadline
+            "title": "Week 4 Materials Uploaded",
+            "posted_on": "Posted on: Tuesday, September 29, 2026 9:02:16 AM CST",
+            "body_markdown": "Reminder: the deadline is 11:59 pm, Oct. 29th.",
+        },
+    ]
+
+    items = parse_announcement_due_items(entries, course, today=date(2026, 10, 31))
+
+    assert [
+        (item.kind, item.title, item.due_date.isoformat() if item.due_date else None)
+        for item in items
+    ] == [
+        ("assignment", "HW4", "2026-10-31"),
+        ("assignment", "HW5", "2026-11-08"),
+        ("assignment", "Homework assignment 3", "2026-10-30"),
+        ("assignment", "Assignment 2", "2026-11-02"),
+    ]
+
+
+def test_merge_due_items_prefers_todo_over_announcement_duplicate() -> None:
+    """同一天、同一件事：To Do 模块的条目优先，公告推断的那份丢弃。"""
+    from datetime import date
+
+    from bb_sync.blackboard.models import DueItem
+    from bb_sync.core.due import merge_due_items
+
+    todo = DueItem("_1_1", "MDS5020", "DM", "Assignment 2", date(2026, 11, 2))
+    duplicate = DueItem(
+        "_1_1", "MDS5020", "DM", "Assignment 2", date(2026, 11, 2), kind="assignment"
+    )
+    exam = DueItem("_1_1", "MDS5020", "DM", "Midterm Exam", date(2026, 11, 2), kind="exam")
+
+    merged = merge_due_items([todo], [duplicate, exam])
+
+    # 同一天但不同的事（作业 vs 考试）都要保留
+    assert merged == [todo, exam]
+
+
+def test_build_due_markdown_keeps_overdue_assignment_actionable() -> None:
+    """公告推断的作业逾期仍算「已逾期」：它可能还没交，不能像考完的考试那样归档。"""
+    from datetime import date, datetime
+
+    from bb_sync.blackboard.models import Course, DueItem
+    from bb_sync.core.due import build_due_markdown
+
+    course = Course(bb_id="_1_1", title="CSC5010: Artificial Intelligence")
+    item = DueItem("_1_1", "CSC5010", "AI", "HW4", date(2026, 10, 30), kind="assignment")
+
+    markdown = build_due_markdown(
+        [course],
+        [item],
+        generated_at=datetime(2026, 10, 31, 8, 30),
+        today=date(2026, 10, 31),
+    )
+
+    assert "## 已逾期（1）" in markdown
+    assert "（逾期 1 天）" in markdown
+    assert "【作业】HW4" in markdown
+    assert "已过期事件" not in markdown
+
+
+def test_write_due_markdown_skips_unchanged_content(tmp_path: Path) -> None:
+    """内容没变就不重写：否则每次运行都只多一行「更新时间」的 diff。"""
+    from datetime import date, datetime
+
+    from bb_sync.blackboard.models import Course, DueItem
+    from bb_sync.core.due import write_due_markdown
+
+    path = tmp_path / "due.md"
+    course = Course(bb_id="_1_1", title="CSC5010: Artificial Intelligence")
+    item = DueItem("_1_1", "CSC5010", "AI", "Homework 1", date(2026, 10, 31))
+
+    first = write_due_markdown(
+        path,
+        [course],
+        [item],
+        today=date(2026, 10, 31),
+        generated_at=datetime(2026, 10, 31, 9, 0),
+    )
+    before = path.read_text(encoding="utf-8")
+    second = write_due_markdown(
+        path,
+        [course],
+        [item],
+        today=date(2026, 10, 31),
+        generated_at=datetime(2026, 10, 31, 18, 0),
+    )
+
+    assert first is True
+    assert second is False
+    assert path.read_text(encoding="utf-8") == before
+    assert "09:00" in before  # 保留原先的更新时间
+
+
+def test_write_due_markdown_rewrites_when_content_changes(tmp_path: Path) -> None:
+    from datetime import date, datetime
+
+    from bb_sync.blackboard.models import Course, DueItem
+    from bb_sync.core.due import write_due_markdown
+
+    path = tmp_path / "due.md"
+    course = Course(bb_id="_1_1", title="CSC5010: Artificial Intelligence")
+    first_item = DueItem("_1_1", "CSC5010", "AI", "Homework 1", date(2026, 10, 31))
+    second_item = DueItem("_1_1", "CSC5010", "AI", "Homework 2", date(2026, 11, 8))
+
+    write_due_markdown(
+        path, [course], [first_item], today=date(2026, 10, 31), generated_at=datetime(2026, 10, 31)
+    )
+    changed = write_due_markdown(
+        path,
+        [course],
+        [first_item, second_item],
+        today=date(2026, 10, 31),
+        generated_at=datetime(2026, 10, 31),
+    )
+
+    assert changed is True
+    assert "Homework 2" in path.read_text(encoding="utf-8")
 
 
 def test_scrape_announcements_keeps_distinct_titles_and_bodies(tmp_path: Path) -> None:

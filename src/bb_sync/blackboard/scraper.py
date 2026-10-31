@@ -375,6 +375,16 @@ _ANNOUNCEMENT_KIND_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("quiz", _QUIZ_RE),
 )
 
+#: 公告里的作业 / 项目编号（HW4、Assignment 2、Project 3）。只有能认出这类名字的
+#: 截止行才会变成待办：一条公告里带日期的句子太多，没名字的日期分不清是什么事。
+_ASSIGNMENT_NAME_RE = re.compile(
+    r"\b(?:homework|hw|assignment|project|lab)\s*(?:assignment\s*)?#?\s*\d{1,2}\b",
+    re.IGNORECASE,
+)
+
+#: 截止表达；与日期出现在同一行才算作业 deadline。
+_DEADLINE_RE = re.compile(r"\b(?:due|deadline|submit|submission)\b|截止|提交", re.IGNORECASE)
+
 #: 关键词之后最多检查这么多字符，避免把远处的日期牵强算成考试/测验日期。
 _KEYWORD_DATE_WINDOW = 240
 
@@ -481,8 +491,11 @@ def _extract_keyword_date(
 ) -> date | None:
     """从公告里定位关键词附近的日期。
 
-    只看标题与正文中关键词之后、同一段内的日期：日期必须写在测验 / 考试
-    名称后面，避免把关键词之前的作业截止日期误当成考试日期。
+    只取关键词**之后** ``_KEYWORD_DATE_WINDOW`` 个字符内的日期：日期必须写在
+    测验 / 考试名称后面，避免把关键词之前的作业截止日期误当成考试日期。
+
+    不按空行截断：常见写法是「标题一行 + 空行 + Date: …」（期中考试公告尤其如此），
+    截断到第一段会把紧跟着的考试日期丢掉——DDA5002 / MDS5020 的期中就是这样漏报的。
     """
     reference = posted or date.today()
     if pattern.search(title):
@@ -492,9 +505,6 @@ def _extract_keyword_date(
     text = f"{title}\n{body}" if body else title
     for match in pattern.finditer(text):
         window = text[match.end() : match.end() + _KEYWORD_DATE_WINDOW]
-        para_end = window.find("\n\n")
-        if para_end >= 0:
-            window = window[:para_end]
         chosen = _pick_future_date(_find_dates(window, reference), posted)
         if chosen:
             return chosen
@@ -512,11 +522,18 @@ def _announcement_label_from_body(body: str, pattern: re.Pattern[str]) -> str:
 def parse_announcement_due_items(
     entries: list[dict[str, str]], course: Course, *, today: date | None = None
 ) -> list[DueItem]:
-    """把公告里带日期的课堂测验与考试整理成待办条目。
+    """把公告里可预期的日期整理成待办条目。
+
+    两类来源：
+
+    - **测验 / 考试**：命中关键词后取关键词之后的日期（见 :func:`_extract_keyword_date`）；
+    - **作业 deadline**：逐行找同时含日期与截止表达的行，并要求行内（或上一行、
+      公告标题）能认出 ``HW4`` / ``Assignment 2`` 这类作业名。没有名字的日期太容易
+      是别的事情，宁可不收。
 
     读不出日期、日期早于公告发布时间、或日期已过去超过 ``_PAST_EVENT_RETENTION_DAYS``
-    天的公告一律跳过：宁可不收录，也不要把「复习资料里提到 quiz」误当成待办；
-    已经考完的测验 / 考试只值得回看，不该继续占着待办位。
+    天的条目一律跳过：避免把「复习资料里提到 quiz」误当成待办；已经考完的测验 / 考试
+    只值得回看，不该继续占着待办位。
     """
     oldest = (today or date.today()) - timedelta(days=_PAST_EVENT_RETENTION_DAYS)
     items: list[DueItem] = []
@@ -526,30 +543,83 @@ def parse_announcement_due_items(
         body = _clean_announcement_text(str(entry.get("body_markdown") or entry.get("body") or ""))
         if not title and not body:
             continue
-        matched = _announcement_kind(f"{title}\n{body}" if body else title)
-        if matched is None:
-            continue
-        kind, pattern = matched
         posted = parse_announcement_date(str(entry.get("posted_on") or ""))
-        due_date = _extract_keyword_date(title, body, posted, pattern)
-        if due_date is None or due_date < oldest:
-            continue
-        label = title or _announcement_label_from_body(body, pattern) or course.code or course.title
-        key = (due_date.isoformat(), label.casefold())
-        if key in seen:
-            continue
-        seen.add(key)
-        items.append(
-            DueItem(
-                course_id=course.bb_id,
-                course_code=course.code,
-                course_title=course.title,
-                title=label,
-                due_date=due_date,
-                kind=kind,
-            )
-        )
+
+        matched = _announcement_kind(f"{title}\n{body}" if body else title)
+        if matched is not None:
+            kind, pattern = matched
+            due_date = _extract_keyword_date(title, body, posted, pattern)
+            if due_date is not None and due_date >= oldest:
+                label = (
+                    title
+                    or _announcement_label_from_body(body, pattern)
+                    or course.code
+                    or course.title
+                )
+                _append_announcement_item(items, seen, course, label, due_date, kind)
+
+        for due_date, label in _extract_assignment_deadlines(title, body, posted):
+            if due_date >= oldest:
+                _append_announcement_item(items, seen, course, label, due_date, "assignment")
     return items
+
+
+def _append_announcement_item(
+    items: list[DueItem],
+    seen: set[tuple[str, str]],
+    course: Course,
+    label: str,
+    due_date: date,
+    kind: str,
+) -> None:
+    """按「日期 + 标题」去重后新增条目（同一公告里两处提到同一件事只留一条）。"""
+    key = (due_date.isoformat(), label.casefold())
+    if key in seen:
+        return
+    seen.add(key)
+    items.append(
+        DueItem(
+            course_id=course.bb_id,
+            course_code=course.code,
+            course_title=course.title,
+            title=label,
+            due_date=due_date,
+            kind=kind,
+        )
+    )
+
+
+def _assignment_label(line: str, previous: str, title: str) -> str | None:
+    """从截止行、上一行或公告标题里取出作业名；都认不出时返回 None。
+
+    上一行的兜底对应「小节标题 + 单独一行 Deadline」的写法，例如
+    ``2. Coding Assignment 2 Release`` 下面才是 ``- Deadline: 23:59, November 2, 2026``。
+    """
+    for source in (line, previous, title):
+        match = _ASSIGNMENT_NAME_RE.search(source)
+        if match:
+            return match.group(0).strip()
+    return None
+
+
+def _extract_assignment_deadlines(
+    title: str, body: str, posted: date | None
+) -> list[tuple[date, str]]:
+    """逐行找出「日期 + 截止表达 + 可识别作业名」的作业 deadline。"""
+    reference = posted or date.today()
+    found: list[tuple[date, str]] = []
+    previous = ""
+    for line in body.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        if _DEADLINE_RE.search(text):
+            dates = _find_dates(text, reference)
+            label = _assignment_label(text, previous, title)
+            if dates and label:
+                found.append((dates[0][1], label))
+        previous = text
+    return found
 
 
 def _clean_announcement_text(value: str) -> str:

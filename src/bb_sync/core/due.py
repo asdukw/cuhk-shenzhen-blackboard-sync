@@ -21,8 +21,13 @@ _BUCKET_LABELS = {
     "past_events": "已过期事件",
 }
 
-#: 非普通任务的待办类型标签（来自公告的课堂测验 / 考试）；顺序即汇总文案里的出现顺序。
-_KIND_LABELS = {"quiz": "测验", "exam": "考试"}
+#: 非普通任务的待办类型标签（来自公告）；顺序即汇总文案里的出现顺序。
+#: ``assignment`` 是公告里推断出的作业 deadline，和 To Do 模块的普通任务区分开。
+_KIND_LABELS = {"quiz": "测验", "exam": "考试", "assignment": "作业"}
+
+#: 一次性事件：测验 / 考试日期过了只能回看。作业不同——逾期可能只是还没交，
+#: 仍然要留在「已逾期」里提醒。
+_EVENT_KINDS = frozenset({"quiz", "exam"})
 
 
 def kind_label(kind: str) -> str:
@@ -36,7 +41,7 @@ def _is_past_event(item: DueItem, today: date) -> bool:
     与 ``overdue`` 的区别：To Do 模块的逾期任务意味着「还没交」，仍然要行动；
     考完的测验 / 考试已是历史，混进待办里只会淹没真正要做的事。
     """
-    return item.kind in _KIND_LABELS and item.due_date is not None and item.due_date < today
+    return item.kind in _EVENT_KINDS and item.due_date is not None and item.due_date < today
 
 
 def _bucket(item: DueItem, today: date) -> str:
@@ -62,8 +67,8 @@ def relative_due(item: DueItem, today: date) -> str:
         return item.due_text or "日期未知"
     delta = (item.due_date - today).days
     if delta < 0:
-        # 逾期的 To Do 是「还没交」，公告里的测验 / 考试是「已经考过」，措辞分开。
-        return f"已过 {-delta} 天" if item.kind in _KIND_LABELS else f"逾期 {-delta} 天"
+        # 逾期的作业 / To Do 是「还没交」，公告里的测验 / 考试是「已经考过」，措辞分开。
+        return f"已过 {-delta} 天" if item.kind in _EVENT_KINDS else f"逾期 {-delta} 天"
     if delta == 0:
         return "今天"
     if delta == 1:
@@ -84,6 +89,81 @@ def _sort_key(item: DueItem) -> tuple[date, str, str]:
 def sort_due_items(items: list[DueItem]) -> list[DueItem]:
     """按截止日期、课程和任务名返回稳定排序的新列表。"""
     return sorted(items, key=_sort_key)
+
+
+#: 标题分词：拉丁字母串与数字。中文标题走子串包含，见 :func:`_same_event`。
+_TITLE_TOKEN_RE = re.compile(r"[a-z]+|\d+")
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
+#: 不承载区分度的词，比较「是不是同一件事」时忽略。
+_TITLE_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "at",
+        "be",
+        "by",
+        "deadline",
+        "due",
+        "for",
+        "in",
+        "is",
+        "new",
+        "of",
+        "on",
+        "release",
+        "released",
+        "reminder",
+        "the",
+        "to",
+        "update",
+        "updated",
+    }
+)
+
+
+def _title_tokens(text: str) -> set[str]:
+    """标题里可用于判重的实义词；纯数字不算（「HW 2」与「Quiz 2」不是同一件事）。"""
+    return {
+        token
+        for token in _TITLE_TOKEN_RE.findall(text.casefold())
+        if token not in _TITLE_STOPWORDS and not token.isdigit()
+    }
+
+
+def _compact(text: str) -> str:
+    """去掉空格与标点，便于中文标题做包含判断。"""
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", text.casefold())
+
+
+def _same_event(left: DueItem, right: DueItem) -> bool:
+    """同一课程、同一天、标题指向同一件事 → 视为重复条目。"""
+    same_course = bool(
+        (left.course_id and left.course_id == right.course_id)
+        or (left.course_code and left.course_code == right.course_code)
+    )
+    if not same_course or left.due_date is None or left.due_date != right.due_date:
+        return False
+    if _CJK_RE.search(left.title) or _CJK_RE.search(right.title):
+        a, b = _compact(left.title), _compact(right.title)
+        return bool(a and b and (a in b or b in a))
+    return bool(_title_tokens(left.title) & _title_tokens(right.title))
+
+
+def merge_due_items(todo_items: list[DueItem], announcement_items: list[DueItem]) -> list[DueItem]:
+    """合并 To Do 模块与公告推断的待办，去掉同一件事的重复条目。
+
+    To Do 模块是站点的原生数据，说明更准确（标题、逾期状态都来自 Blackboard），
+    所以冲突时保留它；公告条目只在没有对应 To Do 时补进来。
+    """
+    merged = list(todo_items)
+    merged.extend(
+        item
+        for item in announcement_items
+        if not any(_same_event(item, existing) for existing in todo_items)
+    )
+    return merged
 
 
 def build_due_markdown(
@@ -159,6 +239,15 @@ def build_due_markdown(
     return "\n".join(lines)
 
 
+#: 头部「更新时间」行的前缀；比较内容是否变化时先把它去掉。
+_UPDATE_LINE_PREFIX = "> 更新时间："
+
+
+def _without_timestamp(text: str) -> str:
+    """去掉头部的更新时间行，用于判断待办内容本身有没有变化。"""
+    return "\n".join(line for line in text.splitlines() if not line.startswith(_UPDATE_LINE_PREFIX))
+
+
 def write_due_markdown(
     path: Path,
     courses: list[Course],
@@ -167,25 +256,35 @@ def write_due_markdown(
     failed: int = 0,
     today: date | None = None,
     generated_at: datetime | None = None,
-) -> Path:
-    """写入 ``due.md``，父目录不存在时自动创建。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        build_due_markdown(
-            courses,
-            items,
-            failed=failed,
-            today=today,
-            generated_at=generated_at,
-        ),
-        encoding="utf-8",
+) -> bool:
+    """写入 ``due.md``；父目录不存在时自动创建。返回是否真的写了文件。
+
+    内容（除更新时间外）和现有文件一样时保持原样：每次运行都重写会把「更新时间」
+    一起改掉，即使待办一条没变，git 里也多出一份只有时间戳的 diff。
+    """
+    content = build_due_markdown(
+        courses,
+        items,
+        failed=failed,
+        today=today,
+        generated_at=generated_at,
     )
-    return path
+    if path.exists():
+        try:
+            previous = path.read_text(encoding="utf-8")
+        except OSError:
+            previous = ""
+        if _without_timestamp(previous) == _without_timestamp(content):
+            return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return True
 
 
 __all__ = [
     "build_due_markdown",
     "kind_label",
+    "merge_due_items",
     "relative_due",
     "sort_due_items",
     "write_due_markdown",
