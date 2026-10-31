@@ -192,8 +192,11 @@ def _content_length(headers) -> int | None:
         return None
 
 
-def _category_dir(course_dir: Path, item: FileItem) -> Path:
-    """条目落盘目录；作业按 hwN 归档，对齐已有目录习惯。"""
+def category_dir(course_dir: Path, item: FileItem) -> Path:
+    """条目落盘目录；作业按 hwN 归档，对齐已有目录习惯。
+
+    对外的唯一含义是「这个条目会写到哪里」，汇总明细与真实写入共用它。
+    """
     cat_dir = course_dir / item.category
     if item.category == "assignments" and item.name:
         m = HW_NUM.search(item.name)
@@ -202,7 +205,7 @@ def _category_dir(course_dir: Path, item: FileItem) -> Path:
     return cat_dir
 
 
-def _relpath(path: Path, course_dir: Path) -> str:
+def relative_path(path: Path, course_dir: Path) -> str:
     """相对课程目录的展示路径；跨盘等取不到相对路径时退回文件名。"""
     try:
         return str(path.relative_to(course_dir)).replace("\\", "/")
@@ -262,12 +265,12 @@ class DownloadSession:
 
         状态取值：``downloaded`` / ``exists`` / ``would-download`` / ``empty``。
         """
-        cat_dir = _category_dir(course_dir, item)
+        cat_dir = category_dir(course_dir, item)
         name, size = self.probe(item)
 
         already = _index_match(index, name, size)
         if already is not None:
-            return ("exists", _relpath(already, course_dir))
+            return ("exists", relative_path(already, course_dir))
         target = cat_dir / name
         if target.exists():
             return ("exists", target.name)
@@ -344,5 +347,7 @@ __all__ = [
     "SIZE_DEDUP_THRESHOLD",
     "SNIFF_BYTES",
     "build_index",
+    "category_dir",
+    "relative_path",
     "sniff_ext",
 ]

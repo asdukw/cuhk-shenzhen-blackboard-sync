@@ -35,7 +35,7 @@ bb-sync --json doctor       | jq '.ok'
 | 命令 | stdout 的 JSON |
 | --- | --- |
 | `course list` | 数组：`[{"id","code","title","folder"}, ...]` |
-| `run` | 对象：`{"downloaded","exists","would_download","empty","failed","courses"}` |
+| `run` | 对象：`{"downloaded","exists","would_download","empty","failed","courses","files"}`；`files` 是本次**真正新落盘**的文件（dry-run 时为空），元素为 `{"course","category","name","path"}`——`name` 相对课程目录、`path` 为绝对路径 |
 | `due` | 对象：`{"path","total","failed","announcement_failed","courses","items"}`；`items` 含课程、标题、类型（`task` / `quiz` / `exam`）与 ISO 日期 |
 | `doctor` | 对象：`{"ok": bool, "checks": [{"label","ok","detail","hint","required"}]}` |
 | `doctor --list` | 对象：`{"checks": ["python","git", ...]}` |

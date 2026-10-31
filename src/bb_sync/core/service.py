@@ -19,7 +19,14 @@ from playwright.sync_api import sync_playwright
 
 from bb_sync.blackboard import downloader, scraper
 from bb_sync.blackboard.login import ensure_login
-from bb_sync.blackboard.models import Course, DueItem, DueStats, FileItem, SyncStats
+from bb_sync.blackboard.models import (
+    Course,
+    DueItem,
+    DueStats,
+    FileItem,
+    SavedFile,
+    SyncStats,
+)
 from bb_sync.browser import launcher
 from bb_sync.core import due
 from bb_sync.core.config import Settings
@@ -172,6 +179,7 @@ def sync_course(
     console.log(f"    发现 {len(uniq)} 个文件")
 
     index = downloader.build_index(course_dir)
+    label = course.code or course.title
     for item in uniq.values():
         try:
             status, name = downloads.download_item(item, course_dir, options.dry_run, index)
@@ -180,7 +188,28 @@ def sync_course(
             console.warn(f"    [{item.category}] 下载失败: {exc}")
             continue
         stats.bump(status)
+        if status == "downloaded":
+            _record_saved(stats, label, course_dir, item, name)
         _log_item(console, status, item.category, name)
+
+
+def _record_saved(
+    stats: SyncStats, course_label: str, course_dir: Path, item: FileItem, name: str
+) -> None:
+    """把本次新落盘的文件记入明细，供末尾汇总与 ``--json`` 使用。
+
+    落盘位置直接复用 :func:`bb_sync.blackboard.downloader.category_dir`，
+    与真实写入保持同一套目录规则（作业会落到 ``assignments/hwN/``）。
+    """
+    target = downloader.category_dir(course_dir, item) / name
+    stats.files.append(
+        SavedFile(
+            course=course_label,
+            category=item.category,
+            name=downloader.relative_path(target, course_dir),
+            path=str(target),
+        )
+    )
 
 
 def _log_item(console: Console, status: str, category: str, name: str) -> None:
@@ -310,6 +339,7 @@ def run_sync(options: SyncOptions) -> SyncStats:
 
     # 浏览器由 browser_session 收尾：默认已关闭（--keep-open 则留在后台）
     _print_summary(console, stats, options.dry_run)
+    _print_saved_files(console, stats.files)
     if scan.both_failed < len(courses):
         _print_due_details(console, due_items, scan.incomplete)
     return stats
@@ -324,6 +354,20 @@ def _print_summary(console: Console, stats: SyncStats, dry_run: bool) -> None:
         console.log(f"新下载 {stats.downloaded} 个，已存在跳过 {stats.exists} 个")
     if stats.failed:
         console.warn(f"失败 {stats.failed} 个")
+
+
+def _print_saved_files(console: Console, files: list[SavedFile]) -> None:
+    """在 ``run`` 最后逐行列出本次新下载的文件（stderr）。
+
+    行格式 ``[new] 课程 | 相对路径``——路径本身以类别目录开头（``lectures/``、
+    ``assignments/hw2/``），不必再单独标一次类别。逐文件日志负责「跑的时候看进度」，
+    这里负责「跑完了看这一轮到底多了什么」。没有新文件时不打印标题，避免空区块。
+    """
+    if not files:
+        return
+    console.rule("新下载明细")
+    for saved in files:
+        console.log(f"[new] {saved.course} | {saved.name}")
 
 
 def _print_due_details(

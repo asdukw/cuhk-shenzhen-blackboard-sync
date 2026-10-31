@@ -1468,6 +1468,169 @@ def test_print_due_details_one_item_per_line() -> None:
     ]
 
 
+def test_sync_course_records_new_files_with_course_and_category(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """新落盘的文件要连同课程、类别、相对路径一起记入明细。"""
+    from bb_sync.blackboard.models import Course, FileItem, SyncStats
+    from bb_sync.core import service
+    from bb_sync.core.config import Settings
+    from bb_sync.core.output import Console
+
+    course = Course(bb_id="_1_1", title="CSC5010: Artificial Intelligence")
+    course.slug = "CSC5010_AI"
+    item = FileItem(name="Homework 1", url="https://bb/bbcswebdav/hw1", category="assignments")
+
+    monkeypatch.setattr(
+        service.scraper, "collect_menu_links", lambda page, course: [("https://bb/area", "内容")]
+    )
+    monkeypatch.setattr(service.scraper, "find_files", lambda *args, **kwargs: [item])
+
+    class FakeDownloads:
+        def download_item(self, item, course_dir, dry_run, index):
+            return ("downloaded", "Homework 1.pdf")
+
+    stats = SyncStats()
+    options = service.SyncOptions(
+        settings=Settings(root=str(tmp_path), announcements=False),
+        config_path=tmp_path / "config.yaml",
+        root=tmp_path,
+        console=Console(quiet=True),
+    )
+    course_dir = tmp_path / "CSC5010_AI"
+    service.sync_course(None, course, course_dir, options, stats, FakeDownloads())  # type: ignore[arg-type]
+
+    assert stats.downloaded == 1
+    saved = stats.files[0]
+    assert saved.course == "CSC5010"
+    assert saved.category == "assignments"
+    # 作业按 hwN 归档，明细里给的是相对课程目录的路径
+    assert saved.name == "assignments/hw1/Homework 1.pdf"
+    assert Path(saved.path) == course_dir / "assignments" / "hw1" / "Homework 1.pdf"
+
+
+def test_saved_files_are_not_recorded_when_skipped(monkeypatch, tmp_path: Path) -> None:
+    """已存在 / dry-run 的文件不算「新下载」，不进明细。"""
+    from bb_sync.blackboard.models import Course, FileItem, SyncStats
+    from bb_sync.core import service
+    from bb_sync.core.config import Settings
+    from bb_sync.core.output import Console
+
+    course = Course(bb_id="_1_1", title="CSC5010: Artificial Intelligence")
+    item = FileItem(name="Lec 1.pdf", url="https://bb/bbcswebdav/lec1", category="lectures")
+    monkeypatch.setattr(
+        service.scraper, "collect_menu_links", lambda page, course: [("https://bb/area", "内容")]
+    )
+    monkeypatch.setattr(service.scraper, "find_files", lambda *args, **kwargs: [item])
+
+    class FakeDownloads:
+        def download_item(self, item, course_dir, dry_run, index):
+            return ("exists", "lectures/Lec 1.pdf")
+
+    stats = SyncStats()
+    options = service.SyncOptions(
+        settings=Settings(root=str(tmp_path), announcements=False),
+        config_path=tmp_path / "config.yaml",
+        root=tmp_path,
+        console=Console(quiet=True),
+    )
+    service.sync_course(None, course, tmp_path / "c", options, stats, FakeDownloads())  # type: ignore[arg-type]
+
+    assert stats.exists == 1
+    assert stats.files == []
+
+
+def test_print_saved_files_one_item_per_line() -> None:
+    from typing import cast
+
+    from bb_sync.blackboard.models import SavedFile
+    from bb_sync.core import service
+    from bb_sync.core.output import Console
+
+    class FakeConsole:
+        def __init__(self) -> None:
+            self.messages: list[str] = []
+            self.rules: list[str] = []
+
+        def log(self, message: str) -> None:
+            self.messages.append(message)
+
+        def rule(self, title: str = "") -> None:
+            self.rules.append(title)
+
+    fake = FakeConsole()
+    console = cast(Console, fake)
+    service._print_saved_files(
+        console,
+        [
+            SavedFile(
+                "CSC5010", "lectures", "lectures/Lec 5.pdf", "C:/courses/CSC5010/lectures/Lec 5.pdf"
+            ),
+            SavedFile(
+                "MDS5020",
+                "assignments",
+                "assignments/hw2/report.pdf",
+                "C:/courses/MDS5020/assignments/hw2/report.pdf",
+            ),
+        ],
+    )
+
+    assert fake.rules == ["新下载明细"]
+    assert fake.messages == [
+        "[new] CSC5010 | lectures/Lec 5.pdf",
+        "[new] MDS5020 | assignments/hw2/report.pdf",
+    ]
+
+
+def test_print_saved_files_skips_empty_section() -> None:
+    from typing import cast
+
+    from bb_sync.core import service
+    from bb_sync.core.output import Console
+
+    class FakeConsole:
+        def __init__(self) -> None:
+            self.messages: list[str] = []
+            self.rules: list[str] = []
+
+        def log(self, message: str) -> None:
+            self.messages.append(message)
+
+        def rule(self, title: str = "") -> None:
+            self.rules.append(title)
+
+    fake = FakeConsole()
+    console = cast(Console, fake)
+    service._print_saved_files(console, [])
+
+    # 没有新文件时不打标题，避免空区块
+    assert fake.rules == []
+    assert fake.messages == []
+
+
+def test_sync_stats_as_dict_carries_new_files() -> None:
+    from bb_sync.blackboard.models import SavedFile, SyncStats
+
+    stats = SyncStats(downloaded=1)
+    stats.files.append(
+        SavedFile(
+            "CSC5010", "lectures", "lectures/Lec 1.pdf", "C:/courses/CSC5010/lectures/Lec 1.pdf"
+        )
+    )
+
+    payload = stats.as_dict()
+
+    assert payload["downloaded"] == 1
+    assert payload["files"] == [
+        {
+            "course": "CSC5010",
+            "category": "lectures",
+            "name": "lectures/Lec 1.pdf",
+            "path": "C:/courses/CSC5010/lectures/Lec 1.pdf",
+        }
+    ]
+
+
 def test_print_due_details_empty_writes_congratulations() -> None:
     from typing import cast
 

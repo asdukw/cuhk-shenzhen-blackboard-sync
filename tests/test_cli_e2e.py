@@ -310,6 +310,32 @@ def test_run_keep_open_flag_reaches_service(cli, config_file: Path, monkeypatch)
     assert seen == [False, True]
 
 
+def test_run_json_lists_new_files(cli, config_file: Path, monkeypatch) -> None:
+    """``--json run`` 要带上本次新落盘的文件，脚本才知道多了哪些。"""
+    from bb_sync.blackboard.models import SavedFile, SyncStats
+    from bb_sync.core import service
+
+    config_file.write_text("root: ~/courses\ninclude: all\n", encoding="utf-8")
+    saved = SavedFile(
+        "CSC5010", "lectures", "lectures/Lec 1.pdf", "C:/courses/CSC5010/lectures/Lec 1.pdf"
+    )
+
+    monkeypatch.setattr(service, "run_sync", lambda options: SyncStats(downloaded=1, files=[saved]))
+    result = cli(["--json", "run"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["downloaded"] == 1
+    assert payload["files"] == [
+        {
+            "course": "CSC5010",
+            "category": "lectures",
+            "name": "lectures/Lec 1.pdf",
+            "path": "C:/courses/CSC5010/lectures/Lec 1.pdf",
+        }
+    ]
+
+
 def test_keep_open_documented_in_help(cli) -> None:
     """跑完自动关是默认行为，保留浏览器必须有显式开关且出现在帮助里。"""
     for args in (["run", "--help"], ["due", "--help"], ["course", "list", "--help"]):

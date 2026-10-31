@@ -76,6 +76,24 @@ class DueItem:
         }
 
 
+@dataclass(frozen=True)
+class SavedFile:
+    """本次同步新落盘的一个文件。"""
+
+    course: str  # 课程代码；没有代码时退回课程标题
+    category: str  # lectures / assignments / tutorials / other
+    name: str  # 相对课程目录的路径，如 assignments/hw2/report.pdf
+    path: str = ""  # 绝对路径，便于脚本直接取用
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "course": self.course,
+            "category": self.category,
+            "name": self.name,
+            "path": self.path,
+        }
+
+
 @dataclass
 class SyncStats:
     """一次同步的统计结果。"""
@@ -86,6 +104,8 @@ class SyncStats:
     empty: int = 0
     failed: int = 0
     courses: list[str] = field(default_factory=list)
+    #: 本次真正新落盘的文件（不含已存在 / dry-run），供末尾明细与 --json 使用
+    files: list[SavedFile] = field(default_factory=list)
 
     def bump(self, status: str) -> None:
         key = status.replace("-", "_")
@@ -100,6 +120,7 @@ class SyncStats:
             "empty": self.empty,
             "failed": self.failed,
             "courses": self.courses,
+            "files": [saved.as_dict() for saved in self.files],
         }
 
 
@@ -139,5 +160,6 @@ __all__ = [
     "DueItem",
     "DueStats",
     "FileItem",
+    "SavedFile",
     "SyncStats",
 ]
