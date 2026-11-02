@@ -207,7 +207,7 @@ Windows 也可以使用 `bb-sync config set root "D:/University/courses"`。更�
 ## 遇到问题
 
 - **`bb-sync` 找不到**：重开终端，或执行 `uv tool update-shell`。
-- **校外连不上**：先连接学校 VPN，再运行 `bb-sync doctor` 确认网络。
+- **连不上 Blackboard**：校外也能直接访问，不需要学校 VPN；先运行 `bb-sync doctor` 看网络那一项，多数是本机代理无法转发 HTTPS 导致的，关掉代理再试一次。
 - **环境检查不通过**：按 `bb-sync doctor` 的提示安装或配置缺失项。
 - **想留住浏览器窗口**：默认跑完会自动关；用 `--headed --keep-open` 才会保留可见窗口，之后用 `bb-sync browser status` 看状态、`bb-sync browser stop` 关闭（不影响登录态）。
 - **登录失败**：运行 `bb-sync auth status` 查看凭据，再用 `bb-sync run --headed` 重试。

@@ -714,6 +714,19 @@ def test_doctor_network_checks_blackboard_site() -> None:
     assert BASE == "https://bb.cuhk.edu.cn"
 
 
+def test_doctor_network_hint_does_not_require_vpn() -> None:
+    """网络体检失败时的提示不得再让用户去连学校 VPN（Blackboard 校外可直接访问）。
+
+    ``retries=0`` 直接走到失败分支，不联网也不用等重试间隔。
+    """
+    from bb_sync.core import doctor
+
+    result = doctor.check_network(retries=0)
+    assert result.ok is False
+    assert "不需要学校 VPN" in result.hint
+    assert "--skip-network" in result.hint
+
+
 # ---------------------------------------------------------------- 抓取辅助函数
 
 

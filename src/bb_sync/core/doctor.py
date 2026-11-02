@@ -106,7 +106,8 @@ def check_network(retries: int = 3) -> CheckResult:
         False,
         "网络",
         f"{BASE} 不可达 ({last_err})",
-        "校外使用需要先连接学校 VPN；代理用户请确认系统代理已开启",
+        "Blackboard 校外也能直接访问，不需要学校 VPN；请检查本机网络，"
+        "系统代理无法转发 HTTPS 时先关闭代理重试（跳过检查：bb-sync doctor --skip-network）",
     )
 
 
