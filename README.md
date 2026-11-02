@@ -93,7 +93,7 @@ Blackboard 上的东西散在「课程内容」「作业」「公告」几个入
 
 ## 安装
 
-需要 uv、Git 和 Chrome 或 Edge。uv 会自动准备兼容的 Python 3.11+ 并隔离安装，不需要预先安装 Python。浏览器会探测常见安装位置，Windows 自带的 Edge 直接可用。
+需要 Git 和 Chrome 或 Edge。安装 bb-sync 有两个办法：uv 会自己准备兼容的 Python 3.11+ 并隔离安装，不需要预先装 Python；已经装了 Python 3.11+ 的话也可以直接用 pip。浏览器会探测常见安装位置，Windows 自带的 Edge 直接可用。
 
 ### Windows
 
@@ -119,7 +119,7 @@ brew install --cask google-chrome
 
 ### 安装 bb-sync（Windows / macOS 相同）
 
-重开终端后执行：
+用 uv 安装，重开终端后执行：
 
 ```bash
 uv tool install bb-sync
@@ -132,7 +132,15 @@ bb-sync doctor
 uv tool install git+https://github.com/asdukw/cuhk-shenzhen-blackboard-sync
 ```
 
-`bb-sync doctor` 检查环境。刚安装时凭据显示「未配置」、浏览器后端显示「未运行」，都正常。如果提示找不到 `bb-sync`，执行 `uv tool update-shell`，再重开终端。
+已经装了 Python 3.11 或更新版本时，改用 pip 也行，这条路不需要 uv：
+
+```bash
+pip install --user bb-sync
+```
+
+macOS 上一般用 `pip3 install --user bb-sync`。pip 把命令装进 Python 自己的脚本目录；提示找不到 `bb-sync` 就用 `python -m bb_sync`，例如 `python -m bb_sync doctor`，或者改用 `pipx install bb-sync`。
+
+`bb-sync doctor` 检查环境。刚安装时凭据显示「未配置」、浏览器后端显示「未运行」，都正常。uv 装的如果提示找不到 `bb-sync`，执行 `uv tool update-shell`，再重开终端。
 
 ## 首次使用
 
