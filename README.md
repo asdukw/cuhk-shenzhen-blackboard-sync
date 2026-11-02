@@ -19,23 +19,23 @@
 
 Blackboard 上的东西散在「课程内容」「作业」「公告」几个入口，一学期下来几十上百个文件，靠手动点、手动记截止日期很容易漏。bb-sync 把这些收进本地一个目录：
 
-- 课件、作业、指导按课程归好类，重跑只下新增的，结束时逐条列出本轮真正新下载的文件；
-- 有公告的课程会生成一份 `announcements.md`（没有公告的课程不生成，`bb-sync due` 也不写这个文件）；
-- 全部课程的待办汇总成一份 `due.md`，按「已逾期 → 今天 → 明天 → 未来 7 天 → 之后 → 日期未知 → 已过期事件（仅供回看）」排好序，公告里带日期的课堂测验、考试和作业截止时间也一并计入；每条待办都是可勾选的任务列表（`- [ ]`），做完勾上 `- [x]`，下次同步会保留完成状态。
+- 课件、作业、指导按课程归好类。重跑只下新增的，结束时逐条列出本轮真正新下载的文件。
+- 有公告的课程会生成一份 `announcements.md`。没有公告的课程不生成，`bb-sync due` 也不写这个文件。
+- 全部课程的待办汇总成一份 `due.md`，按「已逾期 → 今天 → 明天 → 未来 7 天 → 之后 → 日期未知 → 已过期事件」排好序。公告里带日期的课堂测验、考试和作业截止时间也一并计入。每条待办都是可勾选的任务列表（`- [ ]`），做完勾上 `- [x]`，下次同步保留完成状态。
 
-它**不做**这些：不回传作业、不代签到、不抓成绩、不绕过任何权限——看到的就是你账号里本来能看到的。
+它不回传作业、不代签到、不抓成绩，也绕不过任何权限。看到的就是你账号里本来能看到的。
 
 ## 长什么样
 
-`bb-sync run` 的真实输出：启动后台浏览器、登录、列课，然后先打印一份「同步计划」——每个课程代码会落到哪个本地目录，动手前就能确认：
+`bb-sync run` 的真实输出分三段。先启动后台浏览器、登录、列出课程，再打印一份「同步计划」，写明每个课程代码会落到哪个本地目录：
 
 ![bb-sync run 的同步计划：登录成功后列出 7 门课程到本地目录的映射](docs/images/run-plan.png)
 
-跑完后是汇总：这轮新下载了什么、跳过了多少已存在的文件；最后是逐条待办明细，逾期红色、测验 / 考试带类型标签：
+跑完是汇总，说明这轮新下载了什么、跳过了多少已存在的文件。最后是逐条待办明细，逾期的红色，测验和考试带类型标签：
 
 ![bb-sync run 的汇总、新下载明细与待办明细](docs/images/run-summary.png)
 
-下面的文本示例用于复制（课程名和文件名为虚构，链接缩写为 `…`，实际每条都带回到对应 Blackboard 课程页的链接）。
+下面的文本示例可以直接复制。课程名和文件名是虚构的，链接缩写为 `…`，实际每条都指回对应的 Blackboard 课程页。
 
 `due.md`：
 
@@ -93,7 +93,7 @@ Blackboard 上的东西散在「课程内容」「作业」「公告」几个入
 
 ## 安装
 
-需要 uv、Git 和 Chrome 或 Edge。uv 会自动准备兼容的 Python 3.11+ 并隔离安装，不需要预先安装 Python；浏览器会自动探测常见安装位置，Windows 自带的 Edge 直接可用。
+需要 uv、Git 和 Chrome 或 Edge。uv 会自动准备兼容的 Python 3.11+ 并隔离安装，不需要预先安装 Python。浏览器会探测常见安装位置，Windows 自带的 Edge 直接可用。
 
 ### Windows
 
@@ -104,7 +104,7 @@ winget install --id Git.Git -e
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-也可以自行安装 Google Chrome。
+也可以自己装 Google Chrome。
 
 ### macOS
 
@@ -119,7 +119,7 @@ brew install --cask google-chrome
 
 ### 安装 bb-sync（Windows / macOS 相同）
 
-**重开终端**后执行：
+重开终端后执行：
 
 ```bash
 uv tool install bb-sync
@@ -132,7 +132,7 @@ bb-sync doctor
 uv tool install git+https://github.com/asdukw/cuhk-shenzhen-blackboard-sync
 ```
 
-`bb-sync doctor` 用于检查环境；刚安装时凭据显示“未配置”、浏览器后端显示“未运行”都是正常的。如果提示找不到 `bb-sync`，执行 `uv tool update-shell` 后重开终端。
+`bb-sync doctor` 检查环境。刚安装时凭据显示「未配置」、浏览器后端显示「未运行」，都正常。如果提示找不到 `bb-sync`，执行 `uv tool update-shell`，再重开终端。
 
 ## 首次使用
 
@@ -156,9 +156,9 @@ bb-sync run --headed
 bb-sync run
 ```
 
-浏览器默认在**后台无窗口**运行，**跑完自动关闭**，不会在你机器上留下进程。登录态存在 `~/.bb-sync/.browser-profile/` 下、跨次运行保留，所以不必每次登录。
+浏览器默认在后台运行，没有窗口，跑完自动关闭，不在你机器上留下进程。登录状态保存在 `~/.bb-sync/.browser-profile/` 下，跨次运行保留，所以不必每次登录。
 
-想让窗口在命令结束后留在屏幕上（例如连续跑几条命令、观察页面），用 `--headed --keep-open`；之后再 `bb-sync browser stop` 关闭。
+想让窗口在命令结束后留在屏幕上（例如连续跑几条命令、观察页面），用 `--headed --keep-open`，之后用 `bb-sync browser stop` 关闭。
 
 ## 文件位置
 
@@ -176,9 +176,9 @@ bb-sync run
 
 课程根目录还会生成 `due.md`：
 
-- 按「已逾期 → 今天 → 明天 → 未来 7 天 → 之后 → 日期未知 → 已过期事件」排序；公告里带日期的课堂测验、考试和作业截止时间也计入；
-- 每条待办带 `- [ ]` 复选框，勾选状态跨次同步保留；考完的测验 / 考试归入最后的「已过期事件」，保留 7 天；
-- 「更新时间」只在待办内容变化时刷新；内容没变时不重写，没有待办时显示 Congratulations。
+- 按「已逾期 → 今天 → 明天 → 未来 7 天 → 之后 → 日期未知 → 已过期事件」排序。公告里带日期的课堂测验、考试和作业截止时间也计入。
+- 每条待办带 `- [ ]` 复选框，勾选状态跨次同步保留。考完的测验和考试归入最后的「已过期事件」，保留 7 天。
+- 「更新时间」只在待办内容变化时刷新。内容没变就不重写；没有待办时显示 Congratulations。
 
 要修改下载目录：
 
@@ -226,14 +226,14 @@ Windows 也可以使用 `bb-sync config set root "D:/University/courses"`。更�
 
 ## 文档
 
-- [docs/config.md](docs/config.md) —— 配置文件、目录映射与全部配置项
-- [docs/scripting.md](docs/scripting.md) —— `--json` 输出结构与退出码，方便接脚本
-- [CONTRIBUTING.md](CONTRIBUTING.md) —— 开发流程与质量门禁
-- [CHANGELOG.md](CHANGELOG.md) —— 版本变更记录
+- [docs/config.md](docs/config.md)：配置文件、目录映射与全部配置项
+- [docs/scripting.md](docs/scripting.md)：`--json` 输出结构与退出码，方便接脚本
+- [CONTRIBUTING.md](CONTRIBUTING.md)：开发流程与质量门禁
+- [CHANGELOG.md](CHANGELOG.md)：版本变更记录
 
 ## 免责声明
 
-本工具只读取你自己账号里本来就能看到的内容，登录凭据保存在本机系统钥匙串中，不会上传到任何第三方。命令成功后会检查新版本（结果缓存 24 小时，每天最多请求一次 GitHub Releases API），只发送 `bb-sync/<版本号>` 作为 User-Agent，不携带任何个人信息；设置环境变量 `BB_SYNC_NO_UPDATE_CHECK=1` 可关闭该检查。
+本工具只读取你自己账号里本来就能看到的内容，登录凭据保存在本机系统钥匙串中，不会上传到任何第三方。命令成功后会检查新版本，结果缓存 24 小时，每天最多请求一次 GitHub Releases API。请求只发送 `bb-sync/<版本号>` 作为 User-Agent，不携带任何个人信息。设置环境变量 `BB_SYNC_NO_UPDATE_CHECK=1` 可关闭该检查。
 
 课程资料版权归香港中文大学（深圳）及各任课教师所有，**仅供个人学习使用，请勿二次分发**。使用本工具产生的一切后果由使用者自行承担。
 
