@@ -2,6 +2,30 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [2.3.0] — 2026-11-04
+
+### 修复
+
+- **公告里没有编号的作业名也能认出**：此前作业名规则要求 `HW4` / `Assignment 2`
+  这类带编号写法，CSC5010 的 `Homework on Probabilistic Reasoning`（截止
+  2026-11-15）整条被静默丢弃。现在接受「作业词 + 可选编号 + on / about 主题」的
+  写法，守卫改为「标题或截止行相邻行含作业词」；`Week 4 Materials Uploaded` 这类
+  没有作业语境的日期仍然不收录。
+- **To Do 与公告叫法不一致时不再静默丢弃**：Blackboard 把 HW4 的作业容器命名成
+  `Assignment 5`，与同一天公告的 `Homework assignment 4` 冲突，旧版按「To Do 优先」
+  直接丢弃公告条目。现在保留 To Do 的日期与类型，把公告标题记为该条目的别名，
+  `due.md` 渲染成 `Assignment 5（公告称 Homework assignment 4）`，文件头部解释括号含义。
+- **同一编号的两种写法不再重复成两条**：`HW4` 与 `Homework assignment 4` 的主题词
+  集合没有交集，旧版判不成同一件事，同一天会列两条；现在补充「同为作业类说法且
+  编号相同」的判定。
+- **分歧在运行时可观测**：`bb-sync due` 与 `bb-sync run` 的汇总会打印
+  「发现 N 处来源分歧」，`--json` 的条目里也带 `aliases`。
+
+### 变更（不兼容）
+
+- `due.md` 行格式：带来源分歧的条目会在标题后追加 `（公告称 …）`，文件头部相应多一行说明。
+- `--json` 的 `items` 元素新增 `aliases` 字段（无分歧时为空数组）。
+
 ## [2.2.1] — 2026-11-02
 
 ### 修复

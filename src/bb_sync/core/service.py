@@ -377,6 +377,8 @@ def run_sync(options: SyncOptions) -> SyncStats:
                 console.line(
                     ("[due] ", STYLE_ACCENT), (f"Congratulations! 没有待办{tail}", STYLE_SUCCESS)
                 )
+            if note := due.conflict_note(due_items):
+                console.line(("[due] ", STYLE_ACCENT), (note, STYLE_WARN))
 
     # 浏览器由 browser_session 收尾：默认已关闭（--keep-open 则留在后台）
     _print_summary(console, stats, options.dry_run)
@@ -540,6 +542,8 @@ def run_due(options: DueOptions) -> DueStats:
         problems.append(f"{stats.failed} 门课程 To Do 抓取失败")
     if stats.announcement_failed:
         problems.append(f"{stats.announcement_failed} 门课程公告抓取失败")
+    if note := due.conflict_note(stats.items):
+        console.line(("[due] ", STYLE_ACCENT), (note, STYLE_WARN))
     if problems:
         console.warn("；".join(problems) + "，due.md 可能不完整")
     return stats

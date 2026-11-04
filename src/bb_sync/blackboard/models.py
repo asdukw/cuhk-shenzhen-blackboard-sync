@@ -49,7 +49,12 @@ class FileItem:
 
 @dataclass(frozen=True)
 class DueItem:
-    """一项待办：课程主页 Due / To Do 任务，或从公告整理出的课堂测验 / 考试。"""
+    """一项待办：课程主页 Due / To Do 任务，或从公告整理出的课堂测验 / 考试。
+
+    ``aliases`` 记录同一件事在**另一个来源**里的不同叫法：合并 To Do 与公告时，若两边
+    标题指向同一件事但编号或主题对不上（例如教务把 HW4 的容器命名成 ``Assignment 5``），
+    这里保存公告的写法，``due.md`` 会把它渲染在标题后面的括号里，而不是静默丢弃。
+    """
 
     course_id: str
     course_code: str
@@ -58,13 +63,14 @@ class DueItem:
     due_date: date | None
     due_text: str = ""
     kind: str = "task"  # task = To Do 模块；quiz / exam = 公告里的课堂测验 / 考试
+    aliases: tuple[str, ...] = ()
 
     @property
     def course_label(self) -> str:
         """优先显示课程代码，没有代码时退回原始标题。"""
         return self.course_code or self.course_title or self.course_id
 
-    def as_dict(self) -> dict[str, str | None]:
+    def as_dict(self) -> dict[str, object]:
         return {
             "course_id": self.course_id,
             "course_code": self.course_code,
@@ -73,6 +79,7 @@ class DueItem:
             "due_date": self.due_date.isoformat() if self.due_date else None,
             "due_text": self.due_text,
             "kind": self.kind,
+            "aliases": list(self.aliases),
         }
 
 

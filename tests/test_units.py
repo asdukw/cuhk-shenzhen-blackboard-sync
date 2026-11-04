@@ -1171,8 +1171,103 @@ def test_parse_announcement_due_items_collects_assignment_deadlines() -> None:
     ]
 
 
+def test_parse_announcement_due_items_accepts_unnumbered_homework() -> None:
+    """主题式作业名（没有编号）也要收录：CSC5010 那道概率推理作业就是这种写法。"""
+    from datetime import date
+
+    from bb_sync.blackboard.models import Course
+    from bb_sync.blackboard.scraper import parse_announcement_due_items
+
+    course = Course(bb_id="_18482_1", code="CSC5010", title="CSC5010: Artificial Intelligence")
+    entries = [
+        {
+            "title": "Homework on Probabilistic Reasoning",
+            "posted_on": "Posted on: Wednesday, November 4, 2026 4:04:43 PM CST",
+            "body_markdown": (
+                "Homework on Probabilistic Reasoning is assigned.\n\nDeadline is Nov 15, 2026"
+            ),
+        }
+    ]
+
+    items = parse_announcement_due_items(entries, course, today=date(2026, 11, 4))
+
+    assert [
+        (item.kind, item.title, item.due_date.isoformat() if item.due_date else None)
+        for item in items
+    ] == [("assignment", "Homework on Probabilistic Reasoning", "2026-11-15")]
+
+
+def test_parse_announcement_due_items_reads_numbered_assignment_fixture() -> None:
+    """DDA5002 的 Assignment 4 公告：编号式写法照旧能认出，日期取自 prose。"""
+    from datetime import date
+
+    from bb_sync.blackboard.models import Course
+    from bb_sync.blackboard.scraper import parse_announcement_due_items
+
+    course = Course(bb_id="_18443_1", code="DDA5002", title="DDA5002: Optimization")
+    entries = [
+        {
+            "title": "Assignment 4 Released",
+            "posted_on": "Posted on: Wednesday, November 4, 2026 1:42:39 PM CST",
+            "body_markdown": (
+                "Dear All,\n\n"
+                "Homework assignment 4 is now available on Blackboard. Please note that it is "
+                "due by the end of the day on November 13th.\n\n"
+                "Best,\n\nJunchi Yang"
+            ),
+        }
+    ]
+
+    items = parse_announcement_due_items(entries, course, today=date(2026, 11, 4))
+
+    assert [
+        (item.kind, item.title, item.due_date.isoformat() if item.due_date else None)
+        for item in items
+    ] == [("assignment", "Homework assignment 4", "2026-11-13")]
+
+
+def test_parse_announcement_due_items_requires_deadline_wording() -> None:
+    """标题里有 homework 也不够：截止行必须同时有日期和截止表达。"""
+    from datetime import date
+
+    from bb_sync.blackboard.models import Course
+    from bb_sync.blackboard.scraper import parse_announcement_due_items
+
+    course = Course(bb_id="_18482_1", code="CSC5010", title="CSC5010: Artificial Intelligence")
+    entries = [
+        {
+            "title": "Homework 3 Released",
+            "posted_on": "Posted on: Wednesday, November 4, 2026 4:04:43 PM CST",
+            "body_markdown": (
+                "Homework 3 solutions are posted.\n\nThe lecture on Nov 20 covers the exam."
+            ),
+        }
+    ]
+
+    assert parse_announcement_due_items(entries, course, today=date(2026, 11, 4)) == []
+
+
+def test_parse_announcement_due_items_still_ignores_unrelated_deadline() -> None:
+    """没有作业语境时，带截止词和日期的提醒仍然不收录（编号放宽不等于取消守卫）。"""
+    from datetime import date
+
+    from bb_sync.blackboard.models import Course
+    from bb_sync.blackboard.scraper import parse_announcement_due_items
+
+    course = Course(bb_id="_18482_1", code="CSC5010", title="CSC5010: Artificial Intelligence")
+    entries = [
+        {
+            "title": "Week 4 Materials Uploaded",
+            "posted_on": "Posted on: Tuesday, September 29, 2026 9:02:16 AM CST",
+            "body_markdown": "Reminder: the deadline is 11:59 pm, Oct. 29th.",
+        }
+    ]
+
+    assert parse_announcement_due_items(entries, course, today=date(2026, 10, 31)) == []
+
+
 def test_merge_due_items_prefers_todo_over_announcement_duplicate() -> None:
-    """同一天、同一件事：To Do 模块的条目优先，公告推断的那份丢弃。"""
+    """同一天、同一件事且叫法一致：保留 To Do 那份，不产生分歧标注。"""
     from datetime import date
 
     from bb_sync.blackboard.models import DueItem
@@ -1188,6 +1283,116 @@ def test_merge_due_items_prefers_todo_over_announcement_duplicate() -> None:
 
     # 同一天但不同的事（作业 vs 考试）都要保留
     assert merged == [todo, exam]
+
+
+def test_merge_due_items_keeps_conflicting_announcement_title_as_alias() -> None:
+    """To Do 与公告编号对不上时保留 To Do 的日期，但把公告叫法记成别名。"""
+    from datetime import date
+
+    from bb_sync.blackboard.models import DueItem
+    from bb_sync.core.due import merge_due_items
+
+    todo = DueItem("_18443_1", "DDA5002", "DDA5002", "Assignment 5", date(2026, 11, 13))
+    announcement = DueItem(
+        "_18443_1",
+        "DDA5002",
+        "DDA5002",
+        "Homework assignment 4",
+        date(2026, 11, 13),
+        kind="assignment",
+    )
+
+    merged = merge_due_items([todo], [announcement])
+
+    assert len(merged) == 1
+    assert merged[0].title == "Assignment 5"
+    assert merged[0].due_date == date(2026, 11, 13)
+    assert merged[0].kind == "task"
+    assert merged[0].aliases == ("Homework assignment 4",)
+
+
+def test_merge_due_items_ignores_wording_only_difference() -> None:
+    """同一编号的两种写法（HW4 与 Homework assignment 4）不算分歧。"""
+    from datetime import date
+
+    from bb_sync.blackboard.models import DueItem
+    from bb_sync.core.due import merge_due_items
+
+    todo = DueItem("_1_1", "CSC5010", "AI", "HW4", date(2026, 10, 31))
+    announcement = DueItem(
+        "_1_1", "CSC5010", "AI", "Homework assignment 4", date(2026, 10, 31), kind="assignment"
+    )
+
+    merged = merge_due_items([todo], [announcement])
+
+    assert merged == [todo]
+
+
+def test_merge_due_items_keeps_unmatched_announcement_separate() -> None:
+    """主题词不重叠时无法确认是同一件事：两条都留下，不做猜测性合并。"""
+    from datetime import date
+
+    from bb_sync.blackboard.models import DueItem
+    from bb_sync.core.due import merge_due_items
+
+    todo = DueItem("_1_1", "CSC5010", "AI", "Assignment 5", date(2026, 11, 15))
+    announcement = DueItem(
+        "_1_1",
+        "CSC5010",
+        "AI",
+        "Homework on Probabilistic Reasoning",
+        date(2026, 11, 15),
+        kind="assignment",
+    )
+
+    merged = merge_due_items([todo], [announcement])
+
+    assert [item.title for item in merged] == [
+        "Assignment 5",
+        "Homework on Probabilistic Reasoning",
+    ]
+
+
+def test_merge_due_items_appends_announcement_without_todo() -> None:
+    """To Do 模块没有对应条目时，公告推断的待办原样补进来，不带别名。"""
+    from datetime import date
+
+    from bb_sync.blackboard.models import DueItem
+    from bb_sync.core.due import merge_due_items
+
+    announcement = DueItem(
+        "_1_1",
+        "CSC5010",
+        "AI",
+        "Homework on Probabilistic Reasoning",
+        date(2026, 11, 15),
+        kind="assignment",
+    )
+
+    merged = merge_due_items([], [announcement])
+
+    assert merged == [announcement]
+    assert merged[0].aliases == ()
+
+
+def test_due_item_as_dict_includes_aliases() -> None:
+    """--json 输出要带上别名，脚本能据此发现来源分歧。"""
+    from datetime import date
+
+    from bb_sync.blackboard.models import DueItem
+
+    plain = DueItem("_1_1", "CSC5010", "AI", "HW4", date(2026, 10, 31))
+    conflicted = DueItem(
+        "_18443_1",
+        "DDA5002",
+        "DDA",
+        "Assignment 5",
+        date(2026, 11, 13),
+        aliases=("Homework assignment 4",),
+    )
+
+    assert plain.as_dict()["aliases"] == []
+    assert conflicted.as_dict()["aliases"] == ["Homework assignment 4"]
 
 
 def test_build_due_markdown_keeps_overdue_assignment_actionable() -> None:
@@ -1349,6 +1554,133 @@ def test_write_due_markdown_keeps_check_when_relative_text_changes(tmp_path: Pat
     text = path.read_text(encoding="utf-8")
     assert changed is True
     assert "- [x] **2026-11-08**（还有 5 天）" in text
+
+
+def test_build_due_markdown_annotates_source_conflict() -> None:
+    """来源叫法对不上时，标题后标注公告里的说法，并在头部说明括号含义。"""
+    from datetime import date, datetime
+
+    from bb_sync.blackboard.models import Course, DueItem
+    from bb_sync.core.due import build_due_markdown
+
+    course = Course(bb_id="_18443_1", code="DDA5002", title="DDA5002: Optimization")
+    item = DueItem(
+        "_18443_1",
+        "DDA5002",
+        "DDA5002",
+        "Assignment 5",
+        date(2026, 11, 13),
+        aliases=("Homework assignment 4",),
+    )
+
+    markdown = build_due_markdown(
+        [course], [item], generated_at=datetime(2026, 11, 4, 21, 0), today=date(2026, 11, 4)
+    )
+
+    assert "Assignment 5（公告称 Homework assignment 4）" in markdown
+    assert "括号里的「公告称 …」" in markdown
+
+
+def test_build_due_markdown_omits_conflict_note_without_aliases() -> None:
+    """没有分歧的日常清单不出现解释行，避免噪音。"""
+    from datetime import date, datetime
+
+    from bb_sync.blackboard.models import Course, DueItem
+    from bb_sync.core.due import build_due_markdown
+
+    course = Course(bb_id="_1_1", title="CSC5010: Artificial Intelligence")
+    item = DueItem("_1_1", "CSC5010", "AI", "HW5", date(2026, 11, 8))
+
+    markdown = build_due_markdown(
+        [course], [item], generated_at=datetime(2026, 11, 4, 21, 0), today=date(2026, 11, 4)
+    )
+
+    assert "公告称" not in markdown
+    assert "括号里的「公告称 …」" not in markdown
+
+
+def test_write_due_markdown_keeps_check_when_alias_disappears(tmp_path: Path) -> None:
+    """别名出现或消失不改变勾选签名：公告措辞变了，已完成状态仍要保住。"""
+    from datetime import date, datetime
+
+    from bb_sync.blackboard.models import Course, DueItem
+    from bb_sync.core.due import write_due_markdown
+
+    path = tmp_path / "due.md"
+    course = Course(bb_id="_18443_1", code="DDA5002", title="DDA5002: Optimization")
+    base = DueItem("_18443_1", "DDA5002", "DDA5002", "Assignment 5", date(2026, 11, 13))
+    conflicted = DueItem(
+        "_18443_1",
+        "DDA5002",
+        "DDA5002",
+        "Assignment 5",
+        date(2026, 11, 13),
+        aliases=("Homework assignment 4",),
+    )
+
+    write_due_markdown(
+        path,
+        [course],
+        [conflicted],
+        today=date(2026, 11, 4),
+        generated_at=datetime(2026, 11, 4, 9, 0),
+    )
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("- [ ] ", "- [x] ", 1), encoding="utf-8"
+    )
+
+    changed = write_due_markdown(
+        path, [course], [base], today=date(2026, 11, 4), generated_at=datetime(2026, 11, 4, 18, 0)
+    )
+
+    text = path.read_text(encoding="utf-8")
+    assert changed is True
+    assert "- [x] **2026-11-13**" in text
+    assert "公告称" not in text
+
+
+def test_conflict_note_reports_count() -> None:
+    """运行汇总里要有一句分歧数量提示；没有分歧时返回 None。"""
+    from datetime import date
+
+    from bb_sync.blackboard.models import DueItem
+    from bb_sync.core.due import conflict_note
+
+    plain = DueItem("_1_1", "CSC5010", "AI", "HW5", date(2026, 11, 8))
+    conflicted = DueItem(
+        "_18443_1",
+        "DDA5002",
+        "DDA",
+        "Assignment 5",
+        date(2026, 11, 13),
+        aliases=("Homework assignment 4",),
+    )
+
+    assert conflict_note([plain]) is None
+    assert conflict_note([plain, conflicted]) == "发现 1 处来源分歧（已在 due.md 括号中标注）"
+
+
+def test_due_stats_as_dict_exposes_aliases() -> None:
+    """``bb-sync due --json`` 的条目里要带别名，脚本可据此发现分歧。"""
+    from datetime import date
+
+    from bb_sync.blackboard.models import DueItem, DueStats
+
+    item = DueItem(
+        "_18443_1",
+        "DDA5002",
+        "DDA",
+        "Assignment 5",
+        date(2026, 11, 13),
+        aliases=("Homework assignment 4",),
+    )
+    stats = DueStats(path="due.md", items=[item], courses=["DDA5002"])
+
+    payload = stats.as_dict()
+    items = payload["items"]
+
+    assert isinstance(items, list)
+    assert items[0]["aliases"] == ["Homework assignment 4"]
 
 
 def test_scrape_announcements_keeps_distinct_titles_and_bodies(tmp_path: Path) -> None:

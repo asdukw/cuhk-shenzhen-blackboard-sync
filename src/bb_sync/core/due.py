@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections import Counter, defaultdict
 from collections.abc import Collection
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -138,6 +139,49 @@ def _compact(text: str) -> str:
     return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", text.casefold())
 
 
+#: 标题里的编号；作业 / 考试的序号通常是 1-2 位（``Assignment 5``、``HW4``）。
+_TITLE_NUMBER_RE = re.compile(r"\d{1,2}")
+
+
+def _title_identity(title: str) -> tuple[int | None, set[str]]:
+    """把标题归一为「编号 + 主题词」，用于判断两个来源的分歧是否实质。"""
+    numbers = _TITLE_NUMBER_RE.findall(title)
+    number = int(numbers[0]) if numbers else None
+    return number, _title_tokens(title)
+
+
+def _titles_conflict(left: str, right: str) -> bool:
+    """两个来源对同一件事的叫法是否构成实质分歧（纯措辞差异不算）。
+
+    有编号的一律比编号：``HW4`` 与 ``Homework assignment 4`` 是同一份作业，
+    ``Assignment 5`` 与 ``Homework assignment 4`` 不是。双方都没有编号时才退回主题词
+    交集；中文标题用去标点后的包含判断。
+    """
+    left_number, left_tokens = _title_identity(left)
+    right_number, right_tokens = _title_identity(right)
+    if left_number is not None and right_number is not None:
+        return left_number != right_number
+    if _CJK_RE.search(left) or _CJK_RE.search(right):
+        a, b = _compact(left), _compact(right)
+        return not (a and b and (a in b or b in a))
+    return not (left_tokens & right_tokens)
+
+
+#: 作业 / 项目关键词；用于判断两个标题是否在说同一类对象。允许紧跟编号（``HW4``）。
+_ASSIGNMENT_WORD_RE = re.compile(
+    r"\b(?:homework|hw|assignment|project|lab|problem\s+set|pset)\d*\b", re.IGNORECASE
+)
+
+
+def _titles_same_assignment(left: str, right: str) -> bool:
+    """两个标题都是作业类说法且编号相同 → 同一件事（``HW4`` 与 ``Homework assignment 4``）。"""
+    if not (_ASSIGNMENT_WORD_RE.search(left) and _ASSIGNMENT_WORD_RE.search(right)):
+        return False
+    left_number, _ = _title_identity(left)
+    right_number, _ = _title_identity(right)
+    return left_number is not None and left_number == right_number
+
+
 def _same_event(left: DueItem, right: DueItem) -> bool:
     """同一课程、同一天、标题指向同一件事 → 视为重复条目。"""
     same_course = bool(
@@ -146,6 +190,8 @@ def _same_event(left: DueItem, right: DueItem) -> bool:
     )
     if not same_course or left.due_date is None or left.due_date != right.due_date:
         return False
+    if _titles_same_assignment(left.title, right.title):
+        return True
     if _CJK_RE.search(left.title) or _CJK_RE.search(right.title):
         a, b = _compact(left.title), _compact(right.title)
         return bool(a and b and (a in b or b in a))
@@ -153,18 +199,44 @@ def _same_event(left: DueItem, right: DueItem) -> bool:
 
 
 def merge_due_items(todo_items: list[DueItem], announcement_items: list[DueItem]) -> list[DueItem]:
-    """合并 To Do 模块与公告推断的待办，去掉同一件事的重复条目。
+    """合并 To Do 模块与公告推断的待办。
 
-    To Do 模块是站点的原生数据，说明更准确（标题、逾期状态都来自 Blackboard），
-    所以冲突时保留它；公告条目只在没有对应 To Do 时补进来。
+    To Do 模块是站点的原生数据（日期、逾期状态都来自 Blackboard），同一件事以它为准；
+    但公告里的叫法可能与 To Do 标题对不上（教务也会把作业容器的名字贴错），这时不再
+    丢弃公告条目，而是把公告标题记进 ``aliases``，由 ``due.md`` 显式标注分歧。
+    公告条目只在没有对应 To Do 时作为独立待办补进来。
     """
-    merged = list(todo_items)
-    merged.extend(
-        item
-        for item in announcement_items
-        if not any(_same_event(item, existing) for existing in todo_items)
-    )
+    merged: list[DueItem] = []
+    remaining = list(announcement_items)
+    for todo in todo_items:
+        aliases = list(todo.aliases)
+        leftovers: list[DueItem] = []
+        for announcement in remaining:
+            if not _same_event(announcement, todo):
+                leftovers.append(announcement)
+                continue
+            title = announcement.title.strip()
+            if title and _titles_conflict(todo.title, title) and title not in aliases:
+                aliases.append(title)
+        remaining = leftovers
+        merged.append(
+            todo if tuple(aliases) == todo.aliases else replace(todo, aliases=tuple(aliases))
+        )
+    merged.extend(remaining)
     return merged
+
+
+def conflict_count(items: Collection[DueItem]) -> int:
+    """带来源分歧标注的待办数量。"""
+    return sum(1 for item in items if item.aliases)
+
+
+def conflict_note(items: Collection[DueItem]) -> str | None:
+    """汇总行里的一句分歧提示；没有分歧时返回 None。"""
+    count = conflict_count(items)
+    if not count:
+        return None
+    return f"发现 {count} 处来源分歧（已在 due.md 括号中标注）"
 
 
 #: due.md 里复选框行的形状：``- [ ] …`` / ``- [x] …``。
@@ -172,6 +244,10 @@ _CHECKBOX_LINE_RE = re.compile(r"^- \[(?P<mark>[ xX])\] (?P<body>.*)$")
 
 #: 行内的相对时间（如「还有 3 天」）；每天都会变，不参与勾选状态的匹配。
 _RELATIVE_TIME_RE = re.compile(r"（[^）]*）")
+
+#: 来源分歧注记（如「（公告称 Homework assignment 4）」）；只是展示信息，
+#: 不参与勾选签名，否则公告措辞一变，已勾选的条目就会复位。
+_ALIAS_NOTE_RE = re.compile(r"（公告称 [^）]*）")
 
 
 def _item_signature(item: DueItem) -> str:
@@ -196,7 +272,8 @@ def _checked_signatures(markdown: str) -> set[str]:
         match = _CHECKBOX_LINE_RE.match(line)
         if not match or match.group("mark").lower() != "x":
             continue
-        done.add(_RELATIVE_TIME_RE.sub("", match.group("body"), count=1))
+        body = _RELATIVE_TIME_RE.sub("", match.group("body"), count=1)
+        done.add(_ALIAS_NOTE_RE.sub("", body))
     return done
 
 
@@ -248,6 +325,10 @@ def build_due_markdown(
         lines.append(f"> 注意：{failed} 门课程抓取失败，结果可能不完整。")
     if items:
         lines.append("> 完成一项就在前面打勾（`- [ ]` → `- [x]`），下次同步会保留完成状态。")
+    if conflict_count(items):
+        lines.append(
+            "> 括号里的「公告称 …」表示 To Do 名称与公告写法对不上，两个名字都来自 Blackboard。"
+        )
     lines.append("")
 
     if not items:
@@ -271,10 +352,14 @@ def build_due_markdown(
             label = kind_label(item.kind)
             badge = f"【{label}】" if label else ""
             box = "[x]" if _item_signature(item) in done else "[ ]"
+            title = _escape_markdown(item.title)
+            if item.aliases:
+                aliases = "、".join(_escape_markdown(alias) for alias in item.aliases)
+                title = f"{title}（公告称 {aliases}）"
             lines.append(
                 f"- {box} **{due}**（{relative_due(item, day)}） — "
                 f"[{_escape_markdown(item.course_label)}]({course_url}) — "
-                f"{badge}{_escape_markdown(item.title)}"
+                f"{badge}{title}"
             )
         lines.append("")
     return "\n".join(lines)

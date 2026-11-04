@@ -375,10 +375,27 @@ _ANNOUNCEMENT_KIND_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("quiz", _QUIZ_RE),
 )
 
-#: 公告里的作业 / 项目编号（HW4、Assignment 2、Project 3）。只有能认出这类名字的
-#: 截止行才会变成待办：一条公告里带日期的句子太多，没名字的日期分不清是什么事。
-_ASSIGNMENT_NAME_RE = re.compile(
-    r"\b(?:homework|hw|assignment|project|lab)\s*(?:assignment\s*)?#?\s*\d{1,2}\b",
+#: 公告里的作业 / 项目名（带编号）：HW4、Assignment 2、Problem Set 3。
+_ASSIGNMENT_NUMBERED_RE = re.compile(
+    r"\b(?:homework|hw|assignment|project|lab|problem\s+set|pset)"
+    r"\s*(?:assignment\s*)?#?\s*\d{1,2}\b",
+    re.IGNORECASE,
+)
+
+#: 不带编号的作业名（Homework on Probabilistic Reasoning、Lab on sorting）。
+#: 编号不再是硬性要求：教务也会用主题式命名，强制编号会把这类截止整条漏掉。
+#: 主题必须显式跟在 on / about 后面——只出现一个 ``project`` 的裸词（如
+#: ``Final project report``）分不清是不是截止，宁可不收。
+_ASSIGNMENT_TOPIC_RE = re.compile(
+    r"\b(?:homework|hw|assignment|project|lab|problem\s+set|pset)\b"
+    r"\s+(?:on|about)\s+[A-Za-z][A-Za-z0-9'\u2019\- \t]{2,60}",
+    re.IGNORECASE,
+)
+
+#: 主题式名字后面常跟着谓语（「… is assigned.」「… is due」），截掉保持标签可读。
+_ASSIGNMENT_TAIL_RE = re.compile(
+    r"\s+(?:is|are|was|were|has|have|had|will|would|shall|should|can|could|may|might"
+    r"|due|deadline|submission|submit)\b.*$",
     re.IGNORECASE,
 )
 
@@ -528,8 +545,9 @@ def parse_announcement_due_items(
 
     - **测验 / 考试**：命中关键词后取关键词之后的日期（见 :func:`_extract_keyword_date`）；
     - **作业 deadline**：逐行找同时含日期与截止表达的行，并要求行内（或上一行、
-      公告标题）能认出 ``HW4`` / ``Assignment 2`` 这类作业名。没有名字的日期太容易
-      是别的事情，宁可不收。
+      公告标题）能认出作业名：``HW4`` / ``Assignment 2`` 这类带编号写法，或
+      ``Homework on Probabilistic Reasoning`` 这类主题式写法都可以。没有作业语境的
+      日期太容易是别的事情，宁可不收。
 
     读不出日期、日期早于公告发布时间、或日期已过去超过 ``_PAST_EVENT_RETENTION_DAYS``
     天的条目一律跳过：避免把「复习资料里提到 quiz」误当成待办；已经考完的测验 / 考试
@@ -589,16 +607,33 @@ def _append_announcement_item(
     )
 
 
+def _clean_assignment_label(text: str) -> str:
+    """把抽到的作业名压成一行，并截掉后面的谓语与标点。"""
+    label = re.sub(r"\s+", " ", text).strip(" -—:：*。.,;")
+    label = _ASSIGNMENT_TAIL_RE.sub("", label)
+    return label.strip(" -—:：*。.,;")
+
+
 def _assignment_label(line: str, previous: str, title: str) -> str | None:
     """从截止行、上一行或公告标题里取出作业名；都认不出时返回 None。
 
-    上一行的兜底对应「小节标题 + 单独一行 Deadline」的写法，例如
-    ``2. Coding Assignment 2 Release`` 下面才是 ``- Deadline: 23:59, November 2, 2026``。
+    先找带编号的写法（``HW4``、``Assignment 2``），再接受不带编号的主题式写法
+    （``Homework on Probabilistic Reasoning``）。上一行的兜底对应「小节标题 + 单独一行
+    Deadline」的写法，例如 ``2. Coding Assignment 2 Release`` 下面才是
+    ``- Deadline: 23:59, November 2, 2026``；主题式名字优先取公告标题，避免把
+    ``Homework on X is assigned.`` 整句当成任务名。
     """
     for source in (line, previous, title):
-        match = _ASSIGNMENT_NAME_RE.search(source)
+        match = _ASSIGNMENT_NUMBERED_RE.search(source)
         if match:
-            return match.group(0).strip()
+            return _clean_assignment_label(match.group(0))
+
+    for source in (title, line, previous):
+        match = _ASSIGNMENT_TOPIC_RE.search(source)
+        if match:
+            label = _clean_assignment_label(match.group(0))
+            if label:
+                return label
     return None
 
 
