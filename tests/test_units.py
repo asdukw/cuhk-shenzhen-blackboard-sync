@@ -2079,18 +2079,49 @@ def test_print_due_details_one_item_per_line() -> None:
             DueItem("_2_1", "MDS5122", "DL", "Reading", None),
             DueItem("_3_1", "MDS5020", "DM", "Quiz 1", date(2026, 10, 13), kind="quiz"),
             DueItem("_4_1", "CSC5010", "AI", "Final Exam", date(2026, 12, 15), kind="exam"),
+            DueItem(
+                "_5_1",
+                "DDA5002",
+                "DDA",
+                "Assignment 5",
+                date(2026, 11, 13),
+                aliases=("Homework assignment 4",),
+            ),
         ],
         today=date(2026, 10, 14),
     )
 
     # 只有已经过去的条目带状态：逾期的是「还没交」，考完的是「已经考过」。
+    # 明细行也要带上来源分歧，终端里就能看出教务的编号与公告对不上。
     assert fake.rules == ["待办明细"]
     assert fake.messages == [
         "[due] 2026-10-10（逾期 4 天） | CSC5010 | Homework 1",
         "[due] 日期未知 | MDS5122 | Reading",
         "[due] 2026-10-13（已过 1 天） | MDS5020 | 【测验】Quiz 1",
         "[due] 2026-12-15 | CSC5010 | 【考试】Final Exam",
+        "[due] 2026-11-13 | DDA5002 | Assignment 5（公告称 Homework assignment 4）",
     ]
+
+
+def test_display_title_joins_multiple_aliases() -> None:
+    """同一件事有多个公告叫法时用顿号连起来，与 due.md 渲染保持一致。"""
+    from datetime import date
+
+    from bb_sync.blackboard.models import DueItem
+    from bb_sync.core.due import display_title
+
+    plain = DueItem("_1_1", "CSC5010", "AI", "HW5", date(2026, 11, 8))
+    conflicted = DueItem(
+        "_1_1",
+        "DDA5002",
+        "DDA",
+        "Assignment 5",
+        date(2026, 11, 13),
+        aliases=("Homework assignment 4", "HW4"),
+    )
+
+    assert display_title(plain) == "HW5"
+    assert display_title(conflicted) == "Assignment 5（公告称 Homework assignment 4、HW4）"
 
 
 def test_sync_course_records_new_files_with_course_and_category(

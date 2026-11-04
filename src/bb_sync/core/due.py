@@ -239,6 +239,16 @@ def conflict_note(items: Collection[DueItem]) -> str | None:
     return f"发现 {count} 处来源分歧（已在 due.md 括号中标注）"
 
 
+def display_title(item: DueItem) -> str:
+    """待办在人读输出里的标题：有来源分歧时附上公告里的另一种叫法。
+
+    ``due.md`` 与终端的待办明细共用这一个函数，两处措辞不会走偏。
+    """
+    if not item.aliases:
+        return item.title
+    return f"{item.title}（公告称 {'、'.join(item.aliases)}）"
+
+
 #: due.md 里复选框行的形状：``- [ ] …`` / ``- [x] …``。
 _CHECKBOX_LINE_RE = re.compile(r"^- \[(?P<mark>[ xX])\] (?P<body>.*)$")
 
@@ -352,10 +362,7 @@ def build_due_markdown(
             label = kind_label(item.kind)
             badge = f"【{label}】" if label else ""
             box = "[x]" if _item_signature(item) in done else "[ ]"
-            title = _escape_markdown(item.title)
-            if item.aliases:
-                aliases = "、".join(_escape_markdown(alias) for alias in item.aliases)
-                title = f"{title}（公告称 {aliases}）"
+            title = _escape_markdown(display_title(item))
             lines.append(
                 f"- {box} **{due}**（{relative_due(item, day)}） — "
                 f"[{_escape_markdown(item.course_label)}]({course_url}) — "

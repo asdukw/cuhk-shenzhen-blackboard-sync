@@ -470,7 +470,7 @@ def _print_due_details(
             (item.course_label, STYLE_ACCENT),
             (" | ", STYLE_MUTED),
             (badge, STYLE_BADGE),
-            (item.title, STYLE_TEXT),
+            (due.display_title(item), STYLE_TEXT),
         )
 
 

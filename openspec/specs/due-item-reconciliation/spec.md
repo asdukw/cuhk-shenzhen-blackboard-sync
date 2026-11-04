@@ -53,12 +53,17 @@
 
 ### Requirement: 来源分歧在运行时可观测
 
-`bb-sync due` SHALL 在运行汇总中报告本次发现的分歧条目数量，机器可读输出 SHALL 为每个条目提供别名列表。
+`bb-sync due` 与 `bb-sync run` SHALL 在运行汇总中报告本次发现的分歧条目数量；终端的待办明细行 SHOULD 在标题后标注公告里的另一种叫法；机器可读输出 SHALL 为每个条目提供别名列表。
 
 #### Scenario: 终端汇总提示分歧
 
 - **WHEN** 本次同步产生 1 条带别名的待办
 - **THEN** 终端汇总包含「发现 1 处来源分歧」类提示
+
+#### Scenario: 待办明细标注分歧
+
+- **WHEN** `bb-sync run` 打印待办明细，其中一条标题为 `Assignment 5`、别名为 `Homework assignment 4`
+- **THEN** 该行标题显示为 `Assignment 5（公告称 Homework assignment 4）`
 
 #### Scenario: JSON 输出包含别名
 
